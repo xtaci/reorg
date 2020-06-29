@@ -184,14 +184,18 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession) {
 	expire := time.Duration(reorg.config.AutoExpire) * time.Second
 	hdr := make([]byte, 2)
 	for {
-		conn.SetReadDeadline(time.Now().Add(expire))
+		if reorg.config.AutoExpire > 0 {
+			conn.SetReadDeadline(time.Now().Add(expire))
+		}
 		n, err := io.ReadFull(conn, hdr)
 		if err != nil {
 			log.Println("kcpRX", "err", err, "n", n)
 			return
 		}
 
-		conn.SetReadDeadline(time.Now().Add(expire))
+		if reorg.config.AutoExpire > 0 {
+			conn.SetReadDeadline(time.Now().Add(expire))
+		}
 		payload := make([]byte, binary.LittleEndian.Uint16(hdr))
 		n, err = io.ReadFull(conn, payload)
 		if err != nil {
@@ -251,11 +255,15 @@ func (reorg *Reorg) client() {
 	go reorg.kcpTX(conn)
 	go reorg.kcpRX(conn)
 
-	ticker := time.NewTicker(time.Duration(reorg.config.AutoExpire) * time.Second)
-	defer ticker.Stop()
+	var C <-chan time.Time
+	if reorg.config.AutoExpire > 0 {
+		ticker := time.NewTicker(time.Duration(reorg.config.AutoExpire) * time.Second)
+		defer ticker.Stop()
+		C = ticker.C
+	}
 
 	select {
-	case <-ticker.C: // renewal of kcp session to avoid UDP blocking
+	case <-C: // renewal of kcp session to avoid UDP blocking
 		newconn := reorg.waitConn(reorg.config, reorg.block)
 		go reorg.kcpTX(newconn)
 		go reorg.kcpRX(newconn)
