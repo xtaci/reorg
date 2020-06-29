@@ -253,7 +253,7 @@ func (reorg *Reorg) shaper() {
 				if now.After(packetHeap[0].ts) {
 					// route to tun-device
 					select {
-					case reorg.chDeviceOut <- heap.Pop(&packetHeap).([]byte):
+					case reorg.chDeviceOut <- heap.Pop(&packetHeap).(delayedPacket).packet:
 					case <-reorg.die:
 						return
 					}
