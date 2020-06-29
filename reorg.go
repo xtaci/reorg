@@ -248,7 +248,6 @@ func (reorg *Reorg) shaper() {
 				timer.Reset(packetHeap[0].ts.Sub(now))
 				drained = false
 			}
-			heap.Push(&packetHeap, dp)
 		case now := <-timer.C:
 			drained = true
 			for packetHeap.Len() > 0 {
