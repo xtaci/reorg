@@ -384,15 +384,16 @@ func (reorg *Reorg) Close() {
 // tunReader is a goroutine to keep on read on tun device
 func (reorg *Reorg) tunReader() {
 	// tun reader
-	packet := make([]byte, 1500)
+	buffer := make([]byte, 1500)
 	for {
-		n, err := reorg.iface.Read(packet)
+		n, err := reorg.iface.Read(buffer)
 		if err != nil {
 			log.Fatal("tunReader", "err", err, "n", n)
 		}
-		packet = packet[:n]
-
 		log.Println("tun reader, size", n)
+
+		packet := make([]byte, n)
+		copy(packet, buffer)
 
 		select {
 		case reorg.chFromTun <- packet:
