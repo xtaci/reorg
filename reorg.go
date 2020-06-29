@@ -165,7 +165,7 @@ func (reorg *Reorg) tunTX() {
 				// this might be caused by a scheduling delay
 				n, err := reorg.iface.Write(heap.Pop(&packetHeap).(delayedPacket).packet)
 				if err != nil {
-					log.Println("shaper", "err", err, "n", n)
+					log.Println("tunTX", "err", err, "n", n)
 					return
 				}
 			} else {
@@ -204,7 +204,7 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func()) {
 	defer stopFunc()
 
 	keepalive := time.Duration(reorg.config.KeepAlive) * time.Second
-	keepaliveTimer := time.NewTicker(time.Duration(reorg.config.KeepAlive/2) * time.Second)
+	keepaliveTimer := time.NewTimer(0)
 	defer keepaliveTimer.Stop()
 
 	hdr := make([]byte, 2)
@@ -228,6 +228,8 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func()) {
 				log.Println("kcpTX", "err", err, "n", n)
 				return
 			}
+
+			keepaliveTimer.Reset(time.Duration(reorg.config.KeepAlive/2) * time.Second)
 		case <-reorg.die:
 			return
 		}
