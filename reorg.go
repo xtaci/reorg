@@ -16,16 +16,19 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 )
 
-const TUN_MTU = 1500 // default tun-device MTU
+const (
+	TUN_MTU        = 1500 // default tun-device MTU
+	TUN_DELAYQUEUE = 1024 // packet delay queue to be sent to device
+)
 
 // Reorg defines a packet organizer to maximize throughput via configurable multiple links
 type Reorg struct {
 	config *Config        // the system config.
 	block  kcp.BlockCrypt // the initialized block cipher.
 
-	iface        *water.Interface   // tun device
-	chDeviceIn   chan []byte        // packets received from tun device will be delivered to this chan.
-	chPrerouting chan delayedPacket // packets from kcp session will be sent here to for ordering
+	iface       *water.Interface   // tun device
+	chDeviceIn  chan []byte        // packets received from tun device will be delivered to this chan.
+	chDeviceOut chan delayedPacket // packets from kcp session will be sent here awaiting to deliver to device
 
 	die     chan struct{} // closing signal.
 	dieOnce sync.Once
@@ -86,7 +89,7 @@ func NewReorg(config *Config) *Reorg {
 	reorg.die = make(chan struct{})
 	reorg.iface = iface
 
-	reorg.chPrerouting = make(chan delayedPacket)
+	reorg.chDeviceOut = make(chan delayedPacket, TUN_DELAYQUEUE)
 
 	return reorg
 }
@@ -155,8 +158,7 @@ func (reorg *Reorg) tunTX() {
 
 	for {
 		select {
-		case dp := <-reorg.chPrerouting:
-			log.Println("get from prerouting")
+		case dp := <-reorg.chDeviceOut:
 			now := time.Now()
 			if now.After(dp.ts) {
 				// already delayed! deliver immediately
@@ -197,18 +199,33 @@ func (reorg *Reorg) tunTX() {
 	}
 }
 
-// kcpTX is a goroutine to transmit incoming packets from tun device to kcp session.
-func (reorg *Reorg) kcpTX(conn *kcp.UDPSession) {
+// kcpTX is a goroutine to carry packets from tun device to kcp session.
+func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func()) {
+	defer stopFunc()
+
+	keepalive := time.Duration(reorg.config.KeepAlive) * time.Second
+	keepaliveTimer := time.NewTicker(time.Duration(reorg.config.KeepAlive/2) * time.Second)
+	defer keepaliveTimer.Stop()
+
 	hdr := make([]byte, 2)
 	for {
 		select {
 		case packet := <-reorg.chDeviceIn:
 			binary.LittleEndian.PutUint16(hdr, uint16(len(packet)))
+			conn.SetWriteDeadline(time.Now().Add(keepalive))
 			n, err := conn.WriteBuffers([][]byte{hdr, packet})
 			if err != nil {
 				log.Println("kcpTX", "err", err, "n", n)
 				// put back the packet before return
 				reorg.chDeviceIn <- packet
+				return
+			}
+		case <-keepaliveTimer.C:
+			binary.LittleEndian.PutUint16(hdr, uint16(0)) // a zero-sized packet to keepalive
+			conn.SetWriteDeadline(time.Now().Add(keepalive))
+			n, err := conn.Write(hdr)
+			if err != nil {
+				log.Println("kcpTX", "err", err, "n", n)
 				return
 			}
 		case <-reorg.die:
@@ -217,35 +234,34 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession) {
 	}
 }
 
-// kcpRX is a goroutine to transmit incoming packets from kcp session to tun device.
-func (reorg *Reorg) kcpRX(conn *kcp.UDPSession) {
-	expire := time.Duration(reorg.config.AutoExpire) * time.Second
+// kcpRX is a goroutine to decapsualte incoming packets from kcp session to tun device.
+func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
+	defer stopFunc()
+
+	keepalive := time.Duration(reorg.config.KeepAlive) * time.Second
 	hdr := make([]byte, 2)
 	for {
-		if reorg.config.AutoExpire > 0 {
-			conn.SetReadDeadline(time.Now().Add(expire))
-		}
+		conn.SetReadDeadline(time.Now().Add(keepalive))
 		n, err := io.ReadFull(conn, hdr)
 		if err != nil {
 			log.Println("kcpRX", "err", err, "n", n)
 			return
 		}
 
-		if reorg.config.AutoExpire > 0 {
-			conn.SetReadDeadline(time.Now().Add(expire))
-		}
-		payload := make([]byte, binary.LittleEndian.Uint16(hdr))
-		n, err = io.ReadFull(conn, payload)
-		if err != nil {
-			log.Println("kcpRX", "err", err, "n", n)
-			return
-		}
+		size := binary.LittleEndian.Uint16(hdr)
+		if size > 0 {
+			payload := make([]byte, size)
+			n, err = io.ReadFull(conn, payload)
+			if err != nil {
+				log.Println("kcpRX", "err", err, "n", n)
+				return
+			}
 
-		// prerouting
-		select {
-		case reorg.chPrerouting <- delayedPacket{payload, time.Now().Add(40 * time.Millisecond)}:
-		case <-reorg.die:
-			return
+			select {
+			case reorg.chDeviceOut <- delayedPacket{payload, time.Now().Add(40 * time.Millisecond)}:
+			case <-reorg.die:
+				return
+			}
 		}
 	}
 }
@@ -288,31 +304,23 @@ func (reorg *Reorg) waitConn(config *Config, block kcp.BlockCrypt) *kcp.UDPSessi
 
 // start as client
 func (reorg *Reorg) client() {
-	// establish UDP connection
-	conn := reorg.waitConn(reorg.config, reorg.block)
-	go reorg.kcpTX(conn)
-	go reorg.kcpRX(conn)
+	for {
+		// establish UDP connection
+		conn := reorg.waitConn(reorg.config, reorg.block)
+		// the control struct
+		var stopOnce sync.Once
+		stopped := make(chan struct{})
+		stopFunc := func() {
+			stopOnce.Do(func() {
+				conn.Close()
+				close(stopped)
+			})
+		}
+		go reorg.kcpTX(conn, stopFunc)
+		go reorg.kcpRX(conn, stopFunc)
 
-	var C <-chan time.Time
-	if reorg.config.AutoExpire > 0 {
-		ticker := time.NewTicker(time.Duration(reorg.config.AutoExpire) * time.Second)
-		defer ticker.Stop()
-		C = ticker.C
-	}
-
-	select {
-	case <-C: // renewal of kcp session to avoid UDP blocking
-		newconn := reorg.waitConn(reorg.config, reorg.block)
-		go reorg.kcpTX(newconn)
-		go reorg.kcpRX(newconn)
-		log.Println("new connection established:", newconn.LocalAddr(), "->", newconn.RemoteAddr())
-		log.Println("closing previous connection", conn.LocalAddr(), "->", conn.RemoteAddr())
-		// stop current conn & set the new conn
-		conn.Close()
-		conn = newconn
-	case <-reorg.die:
-		conn.Close()
-		return
+		// wait for connection termination
+		<-stopped
 	}
 }
 
@@ -356,7 +364,15 @@ func (reorg *Reorg) server() {
 		conn.SetMtu(config.MTU)
 		conn.SetWindowSize(config.SndWnd, config.RcvWnd)
 
-		go reorg.kcpTX(conn)
-		go reorg.kcpRX(conn)
+		// the control struct
+		var stopOnce sync.Once
+		stopFunc := func() {
+			stopOnce.Do(func() {
+				conn.Close()
+			})
+		}
+
+		go reorg.kcpTX(conn, stopFunc)
+		go reorg.kcpRX(conn, stopFunc)
 	}
 }

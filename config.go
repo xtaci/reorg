@@ -14,7 +14,6 @@ type Config struct {
 	Crypt        string `json:"crypt"`
 	Mode         string `json:"mode"`
 	Conn         int    `json:"conn"`
-	AutoExpire   int    `json:"autoexpire"`
 	MTU          int    `json:"mtu"`
 	SndWnd       int    `json:"sndwnd"`
 	RcvWnd       int    `json:"rcvwnd"`

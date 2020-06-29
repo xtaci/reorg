@@ -204,7 +204,6 @@ func main() {
 		config.Crypt = c.String("crypt")
 		config.Mode = c.String("mode")
 		config.Conn = c.Int("conn")
-		config.AutoExpire = c.Int("autoexpire")
 		config.MTU = c.Int("mtu")
 		config.SndWnd = c.Int("sndwnd")
 		config.RcvWnd = c.Int("rcvwnd")
@@ -252,6 +251,10 @@ func main() {
 			log.Println("server")
 			log.Println("listening on:", config.Listen)
 		}
+
+		if config.KeepAlive == 0 {
+			log.Fatal("keepalive must be postive")
+		}
 		log.Println("encryption:", config.Crypt)
 		log.Println("nodelay parameters:", config.NoDelay, config.Interval, config.Resend, config.NoCongestion)
 		log.Println("sndwnd:", config.SndWnd, "rcvwnd:", config.RcvWnd)
@@ -260,7 +263,6 @@ func main() {
 		log.Println("sockbuf:", config.SockBuf)
 		log.Println("keepalive:", config.KeepAlive)
 		log.Println("conn:", config.Conn)
-		log.Println("autoexpire:", config.AutoExpire)
 		log.Println("snmplog:", config.SnmpLog)
 		log.Println("snmpperiod:", config.SnmpPeriod)
 		log.Println("quiet:", config.Quiet)
