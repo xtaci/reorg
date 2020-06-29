@@ -99,9 +99,7 @@ func (reorg *Reorg) Serve() {
 		// client creates aggregator on tun
 		// the client connections will re-new itself periodically
 		for i := 0; i < reorg.config.Conn; i++ {
-			conn := reorg.waitConn(reorg.config, reorg.block)
-			go reorg.kcpTX(conn)
-			go reorg.kcpRX(conn)
+			go reorg.client()
 		}
 	} else {
 		// start server
@@ -163,14 +161,17 @@ func (reorg *Reorg) tunTX() {
 
 // kcpTX is a goroutine to transmit incoming packets from tun device to kcp session.
 func (reorg *Reorg) kcpTX(conn *kcp.UDPSession) {
-	size := make([]byte, 2)
+	hdr := make([]byte, 2)
 	for {
 		select {
 		case packet := <-reorg.chDeviceIn:
-			binary.LittleEndian.PutUint16(size, uint16(len(packet)))
-			n, err := conn.WriteBuffers([][]byte{size, packet})
+			binary.LittleEndian.PutUint16(hdr, uint16(len(packet)))
+			n, err := conn.WriteBuffers([][]byte{hdr, packet})
 			if err != nil {
 				log.Println("kcpTX", "err", err, "n", n)
+				// put back the packet before return
+				reorg.chDeviceIn <- packet
+				return
 			}
 		case <-reorg.die:
 			return
@@ -180,17 +181,22 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession) {
 
 // kcpRX is a goroutine to transmit incoming packets from kcp session to tun device.
 func (reorg *Reorg) kcpRX(conn *kcp.UDPSession) {
-	//expired := time.NewTimer(time.Duration(reorg.config.ScavengeTTL) * time.Second)
+	expire := time.Duration(reorg.config.AutoExpire) * time.Second
 	hdr := make([]byte, 2)
 	for {
+		conn.SetReadDeadline(time.Now().Add(expire))
 		n, err := io.ReadFull(conn, hdr)
 		if err != nil {
 			log.Println("kcpRX", "err", err, "n", n)
+			return
 		}
+
+		conn.SetReadDeadline(time.Now().Add(expire))
 		payload := make([]byte, binary.LittleEndian.Uint16(hdr))
 		n, err = io.ReadFull(conn, payload)
 		if err != nil {
 			log.Println("kcpRX", "err", err, "n", n)
+			return
 		}
 
 		select {
@@ -235,6 +241,32 @@ func (reorg *Reorg) waitConn(config *Config, block kcp.BlockCrypt) *kcp.UDPSessi
 			log.Println("re-connecting:", err)
 			time.Sleep(time.Second)
 		}
+	}
+}
+
+// start as client
+func (reorg *Reorg) client() {
+	// establish UDP connection
+	conn := reorg.waitConn(reorg.config, reorg.block)
+	go reorg.kcpTX(conn)
+	go reorg.kcpRX(conn)
+
+	ticker := time.NewTicker(time.Duration(reorg.config.AutoExpire) * time.Second)
+	defer ticker.Stop()
+
+	select {
+	case <-ticker.C: // renewal of kcp session to avoid UDP blocking
+		newconn := reorg.waitConn(reorg.config, reorg.block)
+		go reorg.kcpTX(newconn)
+		go reorg.kcpRX(newconn)
+		log.Println("new connection established:", newconn.LocalAddr(), "->", newconn.RemoteAddr())
+		log.Println("closing previous connection", conn.LocalAddr(), "->", conn.RemoteAddr())
+		// stop current conn & set the new conn
+		conn.Close()
+		conn = newconn
+	case <-reorg.die:
+		conn.Close()
+		return
 	}
 }
 
