@@ -15,20 +15,23 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 )
 
-// Reorg defines a packet organizer to maximize throughput via multiple links
+const TUN_MTU = 1500 // default tun-device MTU
+
+// Reorg defines a packet organizer to maximize throughput via configurable multiple links
 type Reorg struct {
-	config *Config        // the system config
-	block  kcp.BlockCrypt // the initialized block cipher
+	config *Config        // the system config.
+	block  kcp.BlockCrypt // the initialized block cipher.
 
-	iface *water.Interface // tun device
+	iface       *water.Interface // tun device
+	chDeviceIn  chan []byte      // packets received from tun device will be delivered to this chan.
+	chDeviceOut chan []byte      // packets sent to this chan will be wired with tun-devices.
 
-	chFromTun chan []byte // packets received from tun device
-	chToTun   chan []byte // packets to wire on tun device
-
-	die     chan struct{} // closing signal
+	die     chan struct{} // closing signal.
 	dieOnce sync.Once
 }
 
+// NewReorg initialize a Reorg object for data exchanging between
+// tun-device & kcp session
 func NewReorg(config *Config) *Reorg {
 	log.Println("initiating key derivation")
 	pass := pbkdf2.Key([]byte(config.Key), []byte(SALT), 4096, 32, sha1.New)
@@ -64,17 +67,7 @@ func NewReorg(config *Config) *Reorg {
 		block, _ = kcp.NewAESBlockCrypt(pass)
 	}
 
-	reorg := new(Reorg)
-	reorg.config = config
-	reorg.block = block
-	reorg.chFromTun = make(chan []byte)
-	reorg.chToTun = make(chan []byte)
-
-	return reorg
-}
-
-func (reorg *Reorg) Start() {
-	// create tun device
+	// create a tun device
 	iface, err := water.New(water.Config{
 		DeviceType:             water.TUN,
 		PlatformSpecificParams: water.PlatformSpecificParams{Name: "kcp"},
@@ -83,58 +76,84 @@ func (reorg *Reorg) Start() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// create the object
+	reorg := new(Reorg)
+	reorg.config = config
+	reorg.block = block
+	reorg.chDeviceIn = make(chan []byte)
+	reorg.chDeviceOut = make(chan []byte)
+	reorg.die = make(chan struct{})
 	reorg.iface = iface
 
-	// start tun-device reader/writer
-	go reorg.tunReader()
-	go reorg.tunWriter()
+	return reorg
+}
 
-	if reorg.config.Client { // client creates aggregator on tun
-		for k := 0; k < reorg.config.Conn; k++ {
+// Serve starts serving tunnel service
+func (reorg *Reorg) Serve() {
+	// spin-up tun-device reader/writer
+	go reorg.tunRX()
+	go reorg.tunTX()
+
+	if reorg.config.Client {
+		// client creates aggregator on tun
+		// the client connections will re-new itself periodically
+		for i := 0; i < reorg.config.Conn; i++ {
 			conn := reorg.waitConn(reorg.config, reorg.block)
-			go reorg.tun2kcp(conn)
-			go reorg.kcp2tun(conn)
+			go reorg.kcpTX(conn)
+			go reorg.kcpRX(conn)
 		}
-	} else { // server accepts and reorg
+	} else {
+		// start server
 		go reorg.server()
+	}
+
+	// wait on termination signal
+	select {
+	case <-reorg.die:
+		return
 	}
 }
 
+// terminate the re-organizer
 func (reorg *Reorg) Close() {
 	reorg.dieOnce.Do(func() {
 		close(reorg.die)
+		reorg.iface.Close()
 	})
 }
 
-// tunReader is a goroutine to keep on read on tun device
-func (reorg *Reorg) tunReader() {
-	// tun reader
-	buffer := make([]byte, 1500)
+// tunRX is a goroutine for tun-device to receive incoming packets
+func (reorg *Reorg) tunRX() {
+	buffer := make([]byte, TUN_MTU)
 	for {
 		n, err := reorg.iface.Read(buffer)
 		if err != nil {
-			log.Fatal("tunReader", "err", err, "n", n)
+			log.Println("tunReader", "err", err, "n", n)
+			return
 		}
 
+		// make a copy and deliver
 		packet := make([]byte, n)
 		copy(packet, buffer)
 
 		select {
-		case reorg.chFromTun <- packet:
+		case reorg.chDeviceIn <- packet:
 		case <-reorg.die:
 			return
 		}
 	}
 }
 
-// tunWriter is a goroutine to keep on writing to tun device
-func (reorg *Reorg) tunWriter() {
+// tunTX is a goroutine for tun-device to wire outgoing packets
+func (reorg *Reorg) tunTX() {
 	for {
 		select {
-		case packet := <-reorg.chToTun:
+		case packet := <-reorg.chDeviceOut:
 			n, err := reorg.iface.Write(packet)
 			if err != nil {
-				log.Fatal("tunWriter", "err", err, "n", n)
+				log.Println("tunWriter", "err", err, "n", n)
+				return
 			}
 		case <-reorg.die:
 			return
@@ -142,16 +161,16 @@ func (reorg *Reorg) tunWriter() {
 	}
 }
 
-// a goroutine to transmit packets from tun to kcp session
-func (reorg *Reorg) tun2kcp(conn *kcp.UDPSession) {
+// kcpTX is a goroutine to transmit incoming packets from tun device to kcp session.
+func (reorg *Reorg) kcpTX(conn *kcp.UDPSession) {
 	size := make([]byte, 2)
 	for {
 		select {
-		case packet := <-reorg.chFromTun:
+		case packet := <-reorg.chDeviceIn:
 			binary.LittleEndian.PutUint16(size, uint16(len(packet)))
 			n, err := conn.WriteBuffers([][]byte{size, packet})
 			if err != nil {
-				log.Fatal("tun2kcp", "err", err, "n", n)
+				log.Println("kcpTX", "err", err, "n", n)
 			}
 		case <-reorg.die:
 			return
@@ -159,29 +178,30 @@ func (reorg *Reorg) tun2kcp(conn *kcp.UDPSession) {
 	}
 }
 
-// a goroutine to transmit packets to tun from kcp session
-func (reorg *Reorg) kcp2tun(conn *kcp.UDPSession) {
+// kcpRX is a goroutine to transmit incoming packets from kcp session to tun device.
+func (reorg *Reorg) kcpRX(conn *kcp.UDPSession) {
 	//expired := time.NewTimer(time.Duration(reorg.config.ScavengeTTL) * time.Second)
-	size := make([]byte, 2)
+	hdr := make([]byte, 2)
 	for {
-		n, err := io.ReadFull(conn, size)
+		n, err := io.ReadFull(conn, hdr)
 		if err != nil {
-			log.Fatal("kcp2tun", "err", err, "n", n)
+			log.Println("kcpRX", "err", err, "n", n)
 		}
-		payload := make([]byte, binary.LittleEndian.Uint16(size))
+		payload := make([]byte, binary.LittleEndian.Uint16(hdr))
 		n, err = io.ReadFull(conn, payload)
 		if err != nil {
-			log.Fatal("kcp2tun", "err", err, "n", n)
+			log.Println("kcpRX", "err", err, "n", n)
 		}
 
 		select {
-		case reorg.chToTun <- payload:
+		case reorg.chDeviceOut <- payload:
 		case <-reorg.die:
 			return
 		}
 	}
 }
 
+// create conn initialize a new kcp session
 func (reorg *Reorg) createConn(config *Config, block kcp.BlockCrypt) (*kcp.UDPSession, error) {
 	kcpconn, err := dial(config, block)
 	if err != nil {
@@ -259,7 +279,7 @@ func (reorg *Reorg) server() {
 		conn.SetWindowSize(config.SndWnd, config.RcvWnd)
 		conn.SetACKNoDelay(config.AckNodelay)
 
-		go reorg.tun2kcp(conn)
-		go reorg.kcp2tun(conn)
+		go reorg.kcpTX(conn)
+		go reorg.kcpRX(conn)
 	}
 }

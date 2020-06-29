@@ -278,8 +278,8 @@ func main() {
 
 		// start reorg
 		reorg := NewReorg(&config)
-		reorg.Start()
-		select {}
+		reorg.Serve()
+		return nil
 	}
 	myApp.Run(os.Args)
 }
