@@ -21,7 +21,6 @@ type Config struct {
 	DataShard    int    `json:"datashard"`
 	ParityShard  int    `json:"parityshard"`
 	DSCP         int    `json:"dscp"`
-	AckNodelay   bool   `json:"acknodelay"`
 	NoDelay      int    `json:"nodelay"`
 	Interval     int    `json:"interval"`
 	Resend       int    `json:"resend"`

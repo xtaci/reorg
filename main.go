@@ -121,11 +121,6 @@ func main() {
 			Name:  "nocomp",
 			Usage: "disable compression",
 		},
-		cli.BoolFlag{
-			Name:   "acknodelay",
-			Usage:  "flush ack immediately when a packet is received",
-			Hidden: true,
-		},
 		cli.IntFlag{
 			Name:   "nodelay",
 			Value:  0,
@@ -215,7 +210,6 @@ func main() {
 		config.RcvWnd = c.Int("rcvwnd")
 		config.DataShard = c.Int("datashard")
 		config.ParityShard = c.Int("parityshard")
-		config.AckNodelay = c.Bool("acknodelay")
 		config.NoDelay = c.Int("nodelay")
 		config.Interval = c.Int("interval")
 		config.Resend = c.Int("resend")
@@ -263,7 +257,6 @@ func main() {
 		log.Println("sndwnd:", config.SndWnd, "rcvwnd:", config.RcvWnd)
 		log.Println("mtu:", config.MTU)
 		log.Println("datashard:", config.DataShard, "parityshard:", config.ParityShard)
-		log.Println("acknodelay:", config.AckNodelay)
 		log.Println("sockbuf:", config.SockBuf)
 		log.Println("keepalive:", config.KeepAlive)
 		log.Println("conn:", config.Conn)
