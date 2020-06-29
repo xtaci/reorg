@@ -166,7 +166,6 @@ func (reorg *Reorg) tunTX() {
 				n, err := reorg.iface.Write(heap.Pop(&packetHeap).(delayedPacket).packet)
 				if err != nil {
 					log.Println("tunTX", "err", err, "n", n)
-					return
 				}
 			} else {
 				heap.Push(&packetHeap, dp)
@@ -184,8 +183,7 @@ func (reorg *Reorg) tunTX() {
 				if now.After(packetHeap[0].ts) {
 					n, err := reorg.iface.Write(heap.Pop(&packetHeap).(delayedPacket).packet)
 					if err != nil {
-						log.Println("shaper", "err", err, "n", n)
-						return
+						log.Println("tunTX", "err", err, "n", n)
 					}
 				} else {
 					timer.Reset(packetHeap[0].ts.Sub(now))
