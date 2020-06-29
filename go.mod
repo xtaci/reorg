@@ -1,4 +1,4 @@
-module github.com/xtaci/kcptun
+module github.com/xtaci/reorg
 
 require (
 	github.com/coreos/go-iptables v0.4.2 // indirect

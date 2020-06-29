@@ -7,6 +7,8 @@ import (
 
 // Config for client
 type Config struct {
+	Client       bool   `json:"clientmode"`
+	Listen       string `json:"listen"`
 	RemoteAddr   string `json:"remoteaddr"`
 	Key          string `json:"key"`
 	Crypt        string `json:"crypt"`

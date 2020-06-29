@@ -16,7 +16,8 @@ import (
 	"github.com/songgao/water"
 	"github.com/urfave/cli"
 	kcp "github.com/xtaci/kcp-go/v5"
-	"github.com/xtaci/kcptun/generic"
+	"github.com/xtaci/reorg/generic"
+	"github.com/xtaci/tcpraw"
 )
 
 const (
@@ -50,16 +51,21 @@ func main() {
 	myApp.Usage = "client(with SMUX)"
 	myApp.Version = VERSION
 	myApp.Flags = []cli.Flag{
-		cli.StringFlag{
-			Name:  "localaddr,l",
-			Value: ":12948",
-			Usage: "local listen address",
+		cli.BoolFlag{
+			Name:  "client",
+			Usage: "",
 		},
 		cli.StringFlag{
 			Name:  "remoteaddr, r",
 			Value: "vps:29900",
 			Usage: "kcp server address",
 		},
+		cli.StringFlag{
+			Name:  "listen,l",
+			Value: ":29900",
+			Usage: "kcp server listen address",
+		},
+
 		cli.StringFlag{
 			Name:   "key",
 			Value:  "it's a secrect",
@@ -206,7 +212,9 @@ func main() {
 	}
 	myApp.Action = func(c *cli.Context) error {
 		config := Config{}
+		config.Listen = c.String("listen")
 		config.RemoteAddr = c.String("remoteaddr")
+		config.Client = c.Bool("client")
 		config.Key = c.String("key")
 		config.Crypt = c.String("crypt")
 		config.Mode = c.String("mode")
@@ -347,11 +355,14 @@ func (reorg *Reorg) Start() {
 	go reorg.tunReader()
 	go reorg.tunWriter()
 
-	// create aggregator on tun
-	for k := 0; k < reorg.config.Conn; k++ {
-		conn := reorg.waitConn(reorg.config, reorg.block)
-		go reorg.tun2kcp(conn)
-		go reorg.kcp2tun(conn)
+	if reorg.config.Client { // client creates aggregator on tun
+		for k := 0; k < reorg.config.Conn; k++ {
+			conn := reorg.waitConn(reorg.config, reorg.block)
+			go reorg.tun2kcp(conn)
+			go reorg.kcp2tun(conn)
+		}
+	} else { // server accepts and reorg
+		go reorg.server()
 	}
 }
 
@@ -463,5 +474,51 @@ func (reorg *Reorg) waitConn(config *Config, block kcp.BlockCrypt) *kcp.UDPSessi
 			log.Println("re-connecting:", err)
 			time.Sleep(time.Second)
 		}
+	}
+}
+
+// start as server
+func (reorg *Reorg) server() {
+	config := reorg.config
+
+	// listen on dual or udp mode
+	var listener *kcp.Listener
+	if config.TCP { // tcp dual stack
+		conn, err := tcpraw.Listen("tcp", config.Listen)
+		checkError(err)
+		lis, err := kcp.ServeConn(reorg.block, config.DataShard, config.ParityShard, conn)
+		checkError(err)
+		listener = lis
+	} else {
+		// udp stack
+		lis, err := kcp.ListenWithOptions(config.Listen, reorg.block, config.DataShard, config.ParityShard)
+		checkError(err)
+		listener = lis
+	}
+
+	// apply settings
+	if err := listener.SetDSCP(config.DSCP); err != nil {
+		log.Println("SetDSCP:", err)
+	}
+	if err := listener.SetReadBuffer(config.SockBuf); err != nil {
+		log.Println("SetReadBuffer:", err)
+	}
+	if err := listener.SetWriteBuffer(config.SockBuf); err != nil {
+		log.Println("SetWriteBuffer:", err)
+	}
+
+	for {
+		conn, err := listener.AcceptKCP()
+		checkError(err)
+		log.Println("remote address:", conn.RemoteAddr())
+		conn.SetStreamMode(true)
+		conn.SetWriteDelay(false)
+		conn.SetNoDelay(config.NoDelay, config.Interval, config.Resend, config.NoCongestion)
+		conn.SetMtu(config.MTU)
+		conn.SetWindowSize(config.SndWnd, config.RcvWnd)
+		conn.SetACKNoDelay(config.AckNodelay)
+
+		go reorg.tun2kcp(conn)
+		go reorg.kcp2tun(conn)
 	}
 }
