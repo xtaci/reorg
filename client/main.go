@@ -2,9 +2,12 @@ package main
 
 import (
 	"crypto/sha1"
+	"encoding/binary"
+	"io"
 	"log"
 	"math/rand"
 	"os"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/pbkdf2"
@@ -267,167 +270,198 @@ func main() {
 		log.Println("snmpperiod:", config.SnmpPeriod)
 		log.Println("quiet:", config.Quiet)
 
-		log.Println("initiating key derivation")
-		pass := pbkdf2.Key([]byte(config.Key), []byte(SALT), 4096, 32, sha1.New)
-		log.Println("key derivation done")
-		var block kcp.BlockCrypt
-		switch config.Crypt {
-		case "sm4":
-			block, _ = kcp.NewSM4BlockCrypt(pass[:16])
-		case "tea":
-			block, _ = kcp.NewTEABlockCrypt(pass[:16])
-		case "xor":
-			block, _ = kcp.NewSimpleXORBlockCrypt(pass)
-		case "none":
-			block, _ = kcp.NewNoneBlockCrypt(pass)
-		case "aes-128":
-			block, _ = kcp.NewAESBlockCrypt(pass[:16])
-		case "aes-192":
-			block, _ = kcp.NewAESBlockCrypt(pass[:24])
-		case "blowfish":
-			block, _ = kcp.NewBlowfishBlockCrypt(pass)
-		case "twofish":
-			block, _ = kcp.NewTwofishBlockCrypt(pass)
-		case "cast5":
-			block, _ = kcp.NewCast5BlockCrypt(pass[:16])
-		case "3des":
-			block, _ = kcp.NewTripleDESBlockCrypt(pass[:24])
-		case "xtea":
-			block, _ = kcp.NewXTEABlockCrypt(pass[:16])
-		case "salsa20":
-			block, _ = kcp.NewSalsa20BlockCrypt(pass)
-		default:
-			config.Crypt = "aes"
-			block, _ = kcp.NewAESBlockCrypt(pass)
-		}
-
-		createConn := func() (*kcp.UDPSession, error) {
-			kcpconn, err := dial(&config, block)
-			if err != nil {
-				return nil, errors.Wrap(err, "dial()")
-			}
-			kcpconn.SetStreamMode(true)
-			kcpconn.SetWriteDelay(false)
-			kcpconn.SetNoDelay(config.NoDelay, config.Interval, config.Resend, config.NoCongestion)
-			kcpconn.SetWindowSize(config.SndWnd, config.RcvWnd)
-			kcpconn.SetMtu(config.MTU)
-			kcpconn.SetACKNoDelay(config.AckNodelay)
-
-			if err := kcpconn.SetDSCP(config.DSCP); err != nil {
-				log.Println("SetDSCP:", err)
-			}
-			if err := kcpconn.SetReadBuffer(config.SockBuf); err != nil {
-				log.Println("SetReadBuffer:", err)
-			}
-			if err := kcpconn.SetWriteBuffer(config.SockBuf); err != nil {
-				log.Println("SetWriteBuffer:", err)
-			}
-			return kcpconn, nil
-		}
-
-		// wait until a connection is ready
-		waitConn := func() *kcp.UDPSession {
-			for {
-				if session, err := createConn(); err == nil {
-					return session
-				} else {
-					log.Println("re-connecting:", err)
-					time.Sleep(time.Second)
-				}
-			}
-		}
-
-		numconn := uint16(config.Conn)
-		muxes := make([]struct {
-			session *kcp.UDPSession
-			ttl     time.Time
-		}, numconn)
-
-		for k := range muxes {
-			muxes[k].session = waitConn()
-			muxes[k].ttl = time.Now().Add(time.Duration(config.AutoExpire) * time.Second)
-		}
-
-		chScavenger := make(chan *kcp.UDPSession, 128)
-		go scavenger(chScavenger, config.ScavengeTTL)
 		go generic.SnmpLogger(config.SnmpLog, config.SnmpPeriod)
-		rr := uint16(0)
-
-		// create tun device
-		ifce, err := water.New(water.Config{
-			DeviceType:             water.TUN,
-			PlatformSpecificParams: water.PlatformSpecificParams{Name: "kcp"},
-		})
-
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		// writer
-		go func() {
-			packet := make([]byte, 1500)
-			for {
-				n, err := ifce.Write(packet)
-				if err != nil {
-					log.Fatal(err)
-				}
-				packet = packet[:n]
-
-				log.Printf("Protocol: % x\n", packet[0]>>4)
-			}
-		}()
-
-		// reader
-		packet := make([]byte, 1500)
-		for {
-			n, err := ifce.Read(packet)
-			if err != nil {
-				log.Fatal(err)
-			}
-			packet = packet[:n]
-
-			idx := rr % numconn
-
-			// do auto expiration && reconnection
-			if config.AutoExpire > 0 && time.Now().After(muxes[idx].ttl) {
-				chScavenger <- muxes[idx].session
-				muxes[idx].session = waitConn()
-				muxes[idx].ttl = time.Now().Add(time.Duration(config.AutoExpire) * time.Second)
-			}
-			rr++
-
-			log.Printf("Protocol: % x\n", packet[0]>>4)
-		}
+		select {}
 	}
 	myApp.Run(os.Args)
 }
 
-type scavengeSession struct {
-	session *kcp.UDPSession
-	ts      time.Time
+// Reorg defines a packet organizer to maximize throughput via multiple links
+type Reorg struct {
+	config *Config        // the system config
+	block  kcp.BlockCrypt // the initialized block cipher
+
+	iface *water.Interface // tun device
+
+	chFromTun chan []byte // packets received from tun device
+	chToTun   chan []byte // packets to wire on tun device
+
+	die     chan struct{} // closing signal
+	dieOnce sync.Once
 }
 
-func scavenger(ch chan *kcp.UDPSession, ttl int) {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	var sessionList []scavengeSession
+func NewReorg(config *Config) *Reorg {
+	log.Println("initiating key derivation")
+	pass := pbkdf2.Key([]byte(config.Key), []byte(SALT), 4096, 32, sha1.New)
+	log.Println("key derivation done")
+	var block kcp.BlockCrypt
+	switch config.Crypt {
+	case "sm4":
+		block, _ = kcp.NewSM4BlockCrypt(pass[:16])
+	case "tea":
+		block, _ = kcp.NewTEABlockCrypt(pass[:16])
+	case "xor":
+		block, _ = kcp.NewSimpleXORBlockCrypt(pass)
+	case "none":
+		block, _ = kcp.NewNoneBlockCrypt(pass)
+	case "aes-128":
+		block, _ = kcp.NewAESBlockCrypt(pass[:16])
+	case "aes-192":
+		block, _ = kcp.NewAESBlockCrypt(pass[:24])
+	case "blowfish":
+		block, _ = kcp.NewBlowfishBlockCrypt(pass)
+	case "twofish":
+		block, _ = kcp.NewTwofishBlockCrypt(pass)
+	case "cast5":
+		block, _ = kcp.NewCast5BlockCrypt(pass[:16])
+	case "3des":
+		block, _ = kcp.NewTripleDESBlockCrypt(pass[:24])
+	case "xtea":
+		block, _ = kcp.NewXTEABlockCrypt(pass[:16])
+	case "salsa20":
+		block, _ = kcp.NewSalsa20BlockCrypt(pass)
+	default:
+		config.Crypt = "aes"
+		block, _ = kcp.NewAESBlockCrypt(pass)
+	}
+
+	reorg := new(Reorg)
+	reorg.config = config
+	reorg.block = block
+	return reorg
+}
+
+func (reorg *Reorg) Start() {
+	// create tun device
+	iface, err := water.New(water.Config{
+		DeviceType:             water.TUN,
+		PlatformSpecificParams: water.PlatformSpecificParams{Name: "kcp"},
+	})
+
+	if err != nil {
+		log.Fatal(err)
+	}
+	reorg.iface = iface
+
+	// start tun-device reader/writer
+	go reorg.tunReader()
+	go reorg.tunWriter()
+
+	// create aggregator on tun
+	for k := 0; k < reorg.config.Conn; k++ {
+		conn := reorg.waitConn(reorg.config, reorg.block)
+		go reorg.tun2kcp(conn)
+		go reorg.kcp2tun(conn)
+	}
+}
+
+func (reorg *Reorg) Close() {
+	reorg.dieOnce.Do(func() {
+		close(reorg.die)
+	})
+}
+
+// tunReader is a goroutine to keep on read on tun device
+func (reorg *Reorg) tunReader() {
+	// tun reader
+	packet := make([]byte, 1500)
+	for {
+		n, err := reorg.iface.Read(packet)
+		if err != nil {
+			log.Fatal("tunReader", "err", err, "n", n)
+		}
+		packet = packet[:n]
+
+		select {
+		case reorg.chFromTun <- packet:
+		case <-reorg.die:
+			return
+		}
+	}
+}
+
+// tunWriter is a goroutine to keep on writing to tun device
+func (reorg *Reorg) tunWriter() {
 	for {
 		select {
-		case sess := <-ch:
-			sessionList = append(sessionList, scavengeSession{sess, time.Now()})
-			log.Println("session marked as expired", sess.RemoteAddr())
-		case <-ticker.C:
-			var newList []scavengeSession
-			for k := range sessionList {
-				s := sessionList[k]
-				if ttl >= 0 && time.Since(s.ts) >= time.Duration(ttl)*time.Second {
-					log.Println("session reached scavenge ttl", s.session.RemoteAddr())
-					s.session.Close()
-				} else {
-					newList = append(newList, sessionList[k])
-				}
+		case packet := <-reorg.chToTun:
+			n, err := reorg.iface.Write(packet)
+			if err != nil {
+				log.Fatal("tunWriter", "err", err, "n", n)
 			}
-			sessionList = newList
+		case <-reorg.die:
+			return
+		}
+	}
+}
+
+// a goroutine to transmit packets from tun to kcp session
+func (reorg *Reorg) tun2kcp(conn *kcp.UDPSession) {
+	size := make([]byte, 2)
+	for {
+		select {
+		case packet := <-reorg.chFromTun:
+			binary.LittleEndian.PutUint16(size, uint16(len(packet)))
+			n, err := conn.WriteBuffers([][]byte{size, packet})
+			if err != nil {
+				log.Fatal("tun2kcp", "err", err, "n", n)
+			}
+		case <-reorg.die:
+			return
+		}
+	}
+}
+
+// a goroutine to transmit packets to tun from kcp session
+func (reorg *Reorg) kcp2tun(conn *kcp.UDPSession) {
+	//expired := time.NewTimer(time.Duration(reorg.config.ScavengeTTL) * time.Second)
+	size := make([]byte, 2)
+	for {
+		n, err := io.ReadFull(conn, size)
+		if err != nil {
+			log.Fatal("kcp2tun", "err", err, "n", n)
+		}
+		payload := make([]byte, binary.LittleEndian.Uint16(size))
+		n, err = io.ReadFull(conn, payload)
+		if err != nil {
+			log.Fatal("kcp2tun", "err", err, "n", n)
+		}
+		reorg.chToTun <- payload
+	}
+}
+
+func (reorg *Reorg) createConn(config *Config, block kcp.BlockCrypt) (*kcp.UDPSession, error) {
+	kcpconn, err := dial(config, block)
+	if err != nil {
+		return nil, errors.Wrap(err, "dial()")
+	}
+	kcpconn.SetStreamMode(true)
+	kcpconn.SetWriteDelay(false)
+	kcpconn.SetNoDelay(config.NoDelay, config.Interval, config.Resend, config.NoCongestion)
+	kcpconn.SetWindowSize(config.SndWnd, config.RcvWnd)
+	kcpconn.SetMtu(config.MTU)
+	kcpconn.SetACKNoDelay(config.AckNodelay)
+
+	if err := kcpconn.SetDSCP(config.DSCP); err != nil {
+		log.Println("SetDSCP:", err)
+	}
+	if err := kcpconn.SetReadBuffer(config.SockBuf); err != nil {
+		log.Println("SetReadBuffer:", err)
+	}
+	if err := kcpconn.SetWriteBuffer(config.SockBuf); err != nil {
+		log.Println("SetWriteBuffer:", err)
+	}
+	return kcpconn, nil
+}
+
+// wait until a connection is ready
+func (reorg *Reorg) waitConn(config *Config, block kcp.BlockCrypt) *kcp.UDPSession {
+	for {
+		if session, err := reorg.createConn(config, block); err == nil {
+			return session
+		} else {
+			log.Println("re-connecting:", err)
+			time.Sleep(time.Second)
 		}
 	}
 }
