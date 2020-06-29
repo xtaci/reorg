@@ -279,6 +279,10 @@ func main() {
 		log.Println("quiet:", config.Quiet)
 
 		go generic.SnmpLogger(config.SnmpLog, config.SnmpPeriod)
+
+		// start reorg
+		reorg := NewReorg(&config)
+		reorg.Start()
 		select {}
 	}
 	myApp.Run(os.Args)
