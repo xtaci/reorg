@@ -224,20 +224,22 @@ func (reorg *Reorg) shaper() {
 	timer := time.NewTimer(0)
 	drained := false
 
+	log.Println("shaper started")
 	for {
 		select {
-		case packet := <-reorg.chPrerouting:
+		case dp := <-reorg.chPrerouting:
+			log.Println("get from prerouting")
 			now := time.Now()
-			if now.After(packet.ts) {
+			if now.After(dp.ts) {
 				// already delayed! deliver immediately
 				// this might be caused by a scheduling delay
 				select {
-				case reorg.chDeviceOut <- heap.Pop(&packetHeap).([]byte):
+				case reorg.chDeviceOut <- heap.Pop(&packetHeap).(delayedPacket).packet:
 				case <-reorg.die:
 					return
 				}
 			} else {
-				heap.Push(&packetHeap, packet)
+				heap.Push(&packetHeap, dp)
 				// properly reset timer to trigger based on the top element
 				stopped := timer.Stop()
 				if !stopped && !drained {
@@ -246,7 +248,7 @@ func (reorg *Reorg) shaper() {
 				timer.Reset(packetHeap[0].ts.Sub(now))
 				drained = false
 			}
-			heap.Push(&packetHeap, packet)
+			heap.Push(&packetHeap, dp)
 		case now := <-timer.C:
 			drained = true
 			for packetHeap.Len() > 0 {
