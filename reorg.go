@@ -23,10 +23,8 @@ type Reorg struct {
 	config *Config        // the system config.
 	block  kcp.BlockCrypt // the initialized block cipher.
 
-	iface       *water.Interface // tun device
-	chDeviceIn  chan []byte      // packets received from tun device will be delivered to this chan.
-	chDeviceOut chan []byte      // packets sent to this chan will be wired with tun-devices.j
-
+	iface        *water.Interface   // tun device
+	chDeviceIn   chan []byte        // packets received from tun device will be delivered to this chan.
 	chPrerouting chan delayedPacket // packets from kcp session will be sent here to for ordering
 
 	die     chan struct{} // closing signal.
@@ -85,7 +83,6 @@ func NewReorg(config *Config) *Reorg {
 	reorg.config = config
 	reorg.block = block
 	reorg.chDeviceIn = make(chan []byte)
-	reorg.chDeviceOut = make(chan []byte)
 	reorg.die = make(chan struct{})
 	reorg.iface = iface
 
@@ -99,7 +96,6 @@ func (reorg *Reorg) Serve() {
 	// spin-up tun-device reader/writer
 	go reorg.tunRX()
 	go reorg.tunTX()
-	go reorg.shaper()
 
 	if reorg.config.Client {
 		// client creates aggregator on tun
@@ -149,15 +145,51 @@ func (reorg *Reorg) tunRX() {
 	}
 }
 
-// tunTX is a goroutine for tun-device to wire outgoing packets
+// tunTX is a goroutine to delay the sending of incoming packet to a fixed interval,
+// this works as a low-phase filter for latency to mitigate system noise, such as:
+// scheduler's delay
 func (reorg *Reorg) tunTX() {
+	var packetHeap delayedPacketHeap
+	timer := time.NewTimer(0)
+	drained := false
+
 	for {
 		select {
-		case packet := <-reorg.chDeviceOut:
-			n, err := reorg.iface.Write(packet)
-			if err != nil {
-				log.Println("tunWriter", "err", err, "n", n)
-				return
+		case dp := <-reorg.chPrerouting:
+			log.Println("get from prerouting")
+			now := time.Now()
+			if now.After(dp.ts) {
+				// already delayed! deliver immediately
+				// this might be caused by a scheduling delay
+				n, err := reorg.iface.Write(heap.Pop(&packetHeap).(delayedPacket).packet)
+				if err != nil {
+					log.Println("shaper", "err", err, "n", n)
+					return
+				}
+			} else {
+				heap.Push(&packetHeap, dp)
+				// properly reset timer to trigger based on the top element
+				stopped := timer.Stop()
+				if !stopped && !drained {
+					<-timer.C
+				}
+				timer.Reset(packetHeap[0].ts.Sub(now))
+				drained = false
+			}
+		case now := <-timer.C:
+			drained = true
+			for packetHeap.Len() > 0 {
+				if now.After(packetHeap[0].ts) {
+					n, err := reorg.iface.Write(heap.Pop(&packetHeap).(delayedPacket).packet)
+					if err != nil {
+						log.Println("shaper", "err", err, "n", n)
+						return
+					}
+				} else {
+					timer.Reset(packetHeap[0].ts.Sub(now))
+					drained = false
+					break
+				}
 			}
 		case <-reorg.die:
 			return
@@ -212,58 +244,6 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession) {
 		// prerouting
 		select {
 		case reorg.chPrerouting <- delayedPacket{payload, time.Now().Add(40 * time.Millisecond)}:
-		case <-reorg.die:
-			return
-		}
-	}
-}
-
-// shaper is a goroutine to delay the sending of incoming packet to a fixed interval
-func (reorg *Reorg) shaper() {
-	var packetHeap delayedPacketHeap
-	timer := time.NewTimer(0)
-	drained := false
-
-	log.Println("shaper started")
-	for {
-		select {
-		case dp := <-reorg.chPrerouting:
-			log.Println("get from prerouting")
-			now := time.Now()
-			if now.After(dp.ts) {
-				// already delayed! deliver immediately
-				// this might be caused by a scheduling delay
-				select {
-				case reorg.chDeviceOut <- heap.Pop(&packetHeap).(delayedPacket).packet:
-				case <-reorg.die:
-					return
-				}
-			} else {
-				heap.Push(&packetHeap, dp)
-				// properly reset timer to trigger based on the top element
-				stopped := timer.Stop()
-				if !stopped && !drained {
-					<-timer.C
-				}
-				timer.Reset(packetHeap[0].ts.Sub(now))
-				drained = false
-			}
-		case now := <-timer.C:
-			drained = true
-			for packetHeap.Len() > 0 {
-				if now.After(packetHeap[0].ts) {
-					// route to tun-device
-					select {
-					case reorg.chDeviceOut <- heap.Pop(&packetHeap).(delayedPacket).packet:
-					case <-reorg.die:
-						return
-					}
-				} else {
-					timer.Reset(packetHeap[0].ts.Sub(now))
-					drained = false
-					break
-				}
-			}
 		case <-reorg.die:
 			return
 		}
