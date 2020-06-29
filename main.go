@@ -364,9 +364,7 @@ func (reorg *Reorg) Start() {
 
 	if reorg.config.Client { // client creates aggregator on tun
 		for k := 0; k < reorg.config.Conn; k++ {
-			log.Println("num conn", reorg.config.Conn)
 			conn := reorg.waitConn(reorg.config, reorg.block)
-			log.Println("conn", conn)
 			go reorg.tun2kcp(conn)
 			go reorg.kcp2tun(conn)
 		}
@@ -390,7 +388,6 @@ func (reorg *Reorg) tunReader() {
 		if err != nil {
 			log.Fatal("tunReader", "err", err, "n", n)
 		}
-		log.Println("tun reader, size", n)
 
 		packet := make([]byte, n)
 		copy(packet, buffer)
@@ -412,7 +409,6 @@ func (reorg *Reorg) tunWriter() {
 			if err != nil {
 				log.Fatal("tunWriter", "err", err, "n", n)
 			}
-			log.Println("tun writer, size", n)
 		case <-reorg.die:
 			return
 		}
@@ -423,10 +419,8 @@ func (reorg *Reorg) tunWriter() {
 func (reorg *Reorg) tun2kcp(conn *kcp.UDPSession) {
 	size := make([]byte, 2)
 	for {
-		log.Println("tun2kcp")
 		select {
 		case packet := <-reorg.chFromTun:
-			log.Println("packet from tun", len(packet))
 			binary.LittleEndian.PutUint16(size, uint16(len(packet)))
 			n, err := conn.WriteBuffers([][]byte{size, packet})
 			if err != nil {
