@@ -168,7 +168,7 @@ func (reorg *Reorg) tunTX() {
 			if now.After(dp.ts) {
 				// already delayed! deliver immediately
 				// this might be caused by a scheduling delay
-				n, err := reorg.iface.Write(heap.Pop(&packetHeap).(delayedPacket).packet)
+				n, err := reorg.iface.Write(dp.packet)
 				if err != nil {
 					log.Println("tunTX", "err", err, "n", n)
 				}
