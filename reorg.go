@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	TUN_MTU        = 1500 // default tun-device MTU
-	TUN_DELAYQUEUE = 1024 // packet delay queue to be sent to device
+	TUN_MTU         = 1500 // default tun-device MTU
+	TUN_DEVICEQUEUE = 1024 // packet IO queue of device
 )
 
 // Reorg defines a packet organizer to maximize throughput via configurable multiple links
@@ -84,11 +84,10 @@ func NewReorg(config *Config) *Reorg {
 	reorg := new(Reorg)
 	reorg.config = config
 	reorg.block = block
-	reorg.chDeviceIn = make(chan []byte)
+	reorg.chDeviceIn = make(chan []byte, TUN_DEVICEQUEUE)
+	reorg.chDeviceOut = make(chan delayedPacket, TUN_DEVICEQUEUE)
 	reorg.die = make(chan struct{})
 	reorg.iface = iface
-
-	reorg.chDeviceOut = make(chan delayedPacket, TUN_DELAYQUEUE)
 
 	return reorg
 }
