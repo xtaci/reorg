@@ -185,7 +185,7 @@ func main() {
 		config.Listen = c.String("listen")
 		config.RemoteAddr = c.String("remoteaddr")
 		config.Client = c.Bool("client")
-		config.Latency = c.Int("Latency")
+		config.Latency = c.Int("latency")
 		config.Key = c.String("key")
 		config.Crypt = c.String("crypt")
 		config.Mode = c.String("mode")
