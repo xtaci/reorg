@@ -202,30 +202,6 @@ func (reorg *Reorg) tunTX() {
 	}
 }
 
-/*
-func (reorg *Reorg) tunTX() {
-	ticker := time.NewTicker(time.Duration(reorg.config.Latency) * time.Millisecond)
-	defer ticker.Stop()
-	var batch [][]byte
-	for {
-		select {
-		case dp := <-reorg.chDeviceOut:
-			batch = append(batch, dp.packet)
-		case <-ticker.C:
-			for k := range batch {
-				n, err := reorg.iface.Write(batch[k])
-				if err != nil {
-					log.Println("tunTX", "err", err, "n", n)
-				}
-			}
-			batch = batch[:0]
-		case <-reorg.die:
-			return
-		}
-	}
-}
-*/
-
 // kcpTX is a goroutine to carry packets from tun device to kcp session.
 func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func()) {
 	defer stopFunc()
