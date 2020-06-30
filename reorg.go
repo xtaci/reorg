@@ -213,8 +213,6 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func()) {
 			n, err := conn.WriteBuffers([][]byte{hdr, packet})
 			if err != nil {
 				log.Println("kcpTX", "err", err, "n", n)
-				// put back the packet before return
-				reorg.chDeviceIn <- packet
 				return
 			}
 		case <-keepaliveTimer.C:
@@ -225,6 +223,8 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func()) {
 				log.Println("kcpTX", "err", err, "n", n)
 				return
 			}
+
+			log.Println("pinged")
 
 			keepaliveTimer.Reset(time.Duration(reorg.config.KeepAlive/2) * time.Second)
 		case <-reorg.die:
@@ -248,7 +248,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 		}
 
 		size := binary.LittleEndian.Uint16(hdr)
-		if size > 0 {
+		if size > 0 { // non-keepalive
 			payload := make([]byte, size)
 			n, err = io.ReadFull(conn, payload)
 			if err != nil {
