@@ -92,7 +92,7 @@ func NewReorg(config *Config) *Reorg {
 	reorg := new(Reorg)
 	reorg.config = config
 	reorg.block = block
-	reorg.chDeviceIn = make(chan []byte)
+	reorg.chDeviceIn = make(chan []byte, TUN_DEVICEQUEUE)
 	reorg.chDeviceOut = make(chan delayedPacket, TUN_DEVICEQUEUE)
 	reorg.die = make(chan struct{})
 	reorg.iface = iface
@@ -103,6 +103,7 @@ func NewReorg(config *Config) *Reorg {
 // Serve starts serving tunnel service
 func (reorg *Reorg) Serve() {
 	// spin-up tun-device reader/writer
+	go reorg.tunRX()
 	go reorg.tunRX()
 	go reorg.tunTX()
 

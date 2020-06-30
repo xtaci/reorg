@@ -1,10 +1,12 @@
 module github.com/xtaci/reorg
 
 require (
+	github.com/aead/chacha20 v0.0.0-20180709150244-8b13a72661da // indirect
 	github.com/coreos/go-iptables v0.4.2 // indirect
 	github.com/google/gopacket v1.1.17 // indirect
 	github.com/klauspost/cpuid v1.2.3 // indirect
 	github.com/pkg/errors v0.9.1
+	github.com/shadowsocks/shadowsocks-go v0.0.0-20200409064450-3e585ff90601 // indirect
 	github.com/songgao/water v0.0.0-20200317203138-2b4b6d7c09d8
 	github.com/templexxx/tsc v0.0.1
 	github.com/tjfoc/gmsm v1.3.0 // indirect
