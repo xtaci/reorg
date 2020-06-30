@@ -81,9 +81,8 @@ func NewReorg(config *Config) *Reorg {
 	// create a tun device
 	iface, err := water.New(water.Config{
 		DeviceType:             water.TUN,
-		PlatformSpecificParams: water.PlatformSpecificParams{Name: "kcp"},
+		PlatformSpecificParams: water.PlatformSpecificParams{Name: config.Tun},
 	})
-
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -168,6 +167,7 @@ func (reorg *Reorg) tunTX() {
 			if now.After(dp.ts) {
 				// already delayed! deliver immediately
 				// this might be caused by a scheduling delay
+				// or incorrectly setting latency
 				n, err := reorg.iface.Write(dp.packet)
 				if err != nil {
 					log.Println("tunTX", "err", err, "n", n)
