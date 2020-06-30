@@ -11,6 +11,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/songgao/water"
+	"github.com/templexxx/tsc"
 	"github.com/xtaci/kcp-go/v5"
 	"github.com/xtaci/tcpraw"
 	"golang.org/x/crypto/pbkdf2"
@@ -35,7 +36,7 @@ type Reorg struct {
 }
 
 // currentMs returns current elasped monotonic milliseconds since program startup
-func currentMs() uint32 { return uint32(time.Now().UnixNano() / int64(time.Millisecond)) }
+func currentMs() uint32 { return uint32(tsc.UnixNano() / int64(time.Millisecond)) }
 
 func _itimediff(later, earlier uint32) int32 {
 	return (int32)(later - earlier)
@@ -208,6 +209,8 @@ func (reorg *Reorg) tunTX() {
 // kcpTX is a goroutine to carry packets from tun device to kcp session.
 func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func()) {
 	defer stopFunc()
+	// tsc calibrate while starting
+	tsc.Calibrate()
 
 	keepalive := time.Duration(reorg.config.KeepAlive) * time.Second
 	keepaliveTimer := time.NewTimer(0)
