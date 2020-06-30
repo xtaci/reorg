@@ -12,11 +12,7 @@ import (
 
 const (
 	// SALT is use for pbkdf2 key expansion
-	SALT = "kcp-go"
-	// maximum supported smux version
-	maxSmuxVer = 2
-	// stream copy buffer size
-	bufSize = 4096
+	SALT = "reorg"
 )
 
 // VERSION is injected by buildflags
@@ -55,7 +51,11 @@ func main() {
 			Value: ":29900",
 			Usage: "kcp server listen address",
 		},
-
+		cli.IntFlag{
+			Name:  "latency",
+			Value: 40,
+			Usage: "extra latency for packet delivery in(ms)",
+		},
 		cli.StringFlag{
 			Name:   "key",
 			Value:  "it's a secrect",
@@ -147,21 +147,6 @@ func main() {
 			Usage: "per-socket buffer in bytes",
 		},
 		cli.IntFlag{
-			Name:  "smuxver",
-			Value: 1,
-			Usage: "specify smux version, available 1,2",
-		},
-		cli.IntFlag{
-			Name:  "smuxbuf",
-			Value: 4194304,
-			Usage: "the overall de-mux buffer in bytes",
-		},
-		cli.IntFlag{
-			Name:  "streambuf",
-			Value: 2097152,
-			Usage: "per stream receive buffer in bytes, smux v2+",
-		},
-		cli.IntFlag{
 			Name:  "keepalive",
 			Value: 10, // nat keepalive interval in seconds
 			Usage: "seconds between heartbeats",
@@ -200,6 +185,7 @@ func main() {
 		config.Listen = c.String("listen")
 		config.RemoteAddr = c.String("remoteaddr")
 		config.Client = c.Bool("client")
+		config.Latency = c.Int("Latency")
 		config.Key = c.String("key")
 		config.Crypt = c.String("crypt")
 		config.Mode = c.String("mode")

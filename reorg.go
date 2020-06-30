@@ -1,7 +1,6 @@
 package main
 
 import (
-	"container/heap"
 	"crypto/sha1"
 	"encoding/binary"
 	"io"
@@ -147,6 +146,7 @@ func (reorg *Reorg) tunRX() {
 	}
 }
 
+/*
 // tunTX is a goroutine to delay the sending of incoming packet to a fixed interval,
 // this works as a low-phase filter for latency to mitigate system noise, such as:
 // scheduler's delay
@@ -190,6 +190,28 @@ func (reorg *Reorg) tunTX() {
 					break
 				}
 			}
+		case <-reorg.die:
+			return
+		}
+	}
+}
+*/
+func (reorg *Reorg) tunTX() {
+	ticker := time.NewTicker(40 * time.Millisecond)
+	defer ticker.Stop()
+	var batch [][]byte
+	for {
+		select {
+		case dp := <-reorg.chDeviceOut:
+			batch = append(batch, dp.packet)
+		case <-ticker.C:
+			for k := range batch {
+				n, err := reorg.iface.Write(batch[k])
+				if err != nil {
+					log.Println("tunTX", "err", err, "n", n)
+				}
+			}
+			batch = batch[:0]
 		case <-reorg.die:
 			return
 		}
