@@ -133,7 +133,6 @@ func (reorg *Reorg) tunRX() {
 		n, err := reorg.iface.Read(buffer)
 		if err != nil {
 			log.Println("tunReader", "err", err, "n", n)
-			return
 		}
 
 		// make a copy and deliver
