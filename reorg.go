@@ -272,7 +272,7 @@ func (reorg *Reorg) createConn(config *Config, block kcp.BlockCrypt) (*kcp.UDPSe
 		return nil, errors.Wrap(err, "dial()")
 	}
 	kcpconn.SetStreamMode(true)
-	kcpconn.SetWriteDelay(true)
+	kcpconn.SetWriteDelay(false)
 	kcpconn.SetNoDelay(config.NoDelay, config.Interval, config.Resend, config.NoCongestion)
 	kcpconn.SetWindowSize(config.SndWnd, config.RcvWnd)
 	kcpconn.SetMtu(config.MTU)
@@ -358,7 +358,7 @@ func (reorg *Reorg) server() {
 		checkError(err)
 		log.Println("remote address:", conn.RemoteAddr())
 		conn.SetStreamMode(true)
-		conn.SetWriteDelay(true)
+		conn.SetWriteDelay(false)
 		conn.SetNoDelay(config.NoDelay, config.Interval, config.Resend, config.NoCongestion)
 		conn.SetMtu(config.MTU)
 		conn.SetWindowSize(config.SndWnd, config.RcvWnd)
