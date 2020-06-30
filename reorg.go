@@ -141,7 +141,7 @@ func (reorg *Reorg) tunRX() {
 		}
 
 		// make a copy and deliver
-		packet := make([]byte, n)
+		packet := defaultAllocator.Get(n)
 		copy(packet, buffer)
 
 		select {
@@ -169,6 +169,7 @@ func (reorg *Reorg) tunTX() {
 				// this might be caused by a scheduling delay
 				// or incorrectly setting latency
 				n, err := reorg.iface.Write(dp.packet)
+				defaultAllocator.Put(dp.packet) // put back after write
 				if err != nil {
 					log.Println("tunTX", "err", err, "n", n)
 				}
@@ -186,7 +187,9 @@ func (reorg *Reorg) tunTX() {
 			drained = true
 			for packetHeap.Len() > 0 {
 				if now.After(packetHeap[0].ts) {
-					n, err := reorg.iface.Write(heap.Pop(&packetHeap).(delayedPacket).packet)
+					packet := heap.Pop(&packetHeap).(delayedPacket).packet
+					n, err := reorg.iface.Write(packet)
+					defaultAllocator.Put(packet) // put back after write
 					if err != nil {
 						log.Println("tunTX", "err", err, "n", n)
 					}
@@ -221,6 +224,8 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func()) {
 			binary.LittleEndian.PutUint32(hdr[2:], uint32(currentMs()))
 			conn.SetWriteDeadline(time.Now().Add(keepalive))
 			n, err := conn.WriteBuffers([][]byte{hdr, packet})
+			// return memory
+			defaultAllocator.Put(packet)
 			if err != nil {
 				log.Println("kcpTX", "err", err, "n", n)
 				return
@@ -258,7 +263,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 
 		size := binary.LittleEndian.Uint16(hdr)
 		if size > 0 { // non-keepalive
-			payload := make([]byte, size)
+			payload := defaultAllocator.Get(int(size))
 			n, err = io.ReadFull(conn, payload)
 			if err != nil {
 				log.Println("kcpRX", "err", err, "n", n)
