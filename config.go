@@ -10,6 +10,7 @@ type Config struct {
 	Client       bool   `json:"clientmode"`
 	Listen       string `json:"listen"`
 	RemoteAddr   string `json:"remoteaddr"`
+	Tun          string `json:"tun"`
 	Latency      int    `json:"Latency"`
 	Key          string `json:"key"`
 	Crypt        string `json:"crypt"`

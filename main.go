@@ -51,6 +51,11 @@ func main() {
 			Value: ":29900",
 			Usage: "kcp server listen address",
 		},
+		cli.StringFlag{
+			Name:  "tun",
+			Value: "reorg",
+			Usage: "name of the tun device",
+		},
 		cli.IntFlag{
 			Name:  "latency",
 			Value: 300,
@@ -186,6 +191,7 @@ func main() {
 		config.RemoteAddr = c.String("remoteaddr")
 		config.Client = c.Bool("client")
 		config.Latency = c.Int("latency")
+		config.Tun = c.String("tun")
 		config.Key = c.String("key")
 		config.Crypt = c.String("crypt")
 		config.Mode = c.String("mode")
@@ -244,7 +250,8 @@ func main() {
 		log.Println("encryption:", config.Crypt)
 		log.Println("nodelay parameters:", config.NoDelay, config.Interval, config.Resend, config.NoCongestion)
 		log.Println("sndwnd:", config.SndWnd, "rcvwnd:", config.RcvWnd)
-		log.Println("mtu:", config.MTU)
+		log.Println("tun:", config.Tun)
+		log.Println("KCP mtu:", config.MTU)
 		log.Println("latency:", config.Latency)
 		log.Println("datashard:", config.DataShard, "parityshard:", config.ParityShard)
 		log.Println("sockbuf:", config.SockBuf)
