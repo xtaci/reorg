@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"io"
 	"log"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -276,7 +277,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 
 			timestamp := binary.LittleEndian.Uint32(hdr[2:])
 			// a longer end-to-end pipe to smooth transfer & avoid packet loss to tcp
-			compensation := reorg.config.Latency - int(_itimediff(currentMs(), timestamp))
+			compensation := reorg.config.Latency - int(_itimediff(currentMs(), timestamp)) + rand.Int()%int((0.1*float64(reorg.config.Latency)))
 
 			select {
 			case reorg.chDeviceOut <- delayedPacket{payload, time.Now().Add(time.Duration(compensation) * time.Millisecond)}:
