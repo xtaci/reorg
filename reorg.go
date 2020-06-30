@@ -270,6 +270,9 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func()) {
 func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 	defer stopFunc()
 
+	var latency int32
+	var latencySet bool
+
 	keepalive := time.Duration(reorg.config.KeepAlive) * time.Second
 	hdr := make([]byte, 6)
 	for {
@@ -289,9 +292,14 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 				return
 			}
 
-			// a longer end-to-end pipe to smooth transfer & avoid packet loss to tcp
 			timestamp := binary.LittleEndian.Uint32(hdr[2:])
-			compensation := reorg.config.Latency - int(_itimediff(currentMs(), timestamp))
+			if !latencySet {
+				latency = _itimediff(currentMs(), timestamp)
+				latencySet = true
+			}
+
+			// a longer end-to-end pipe to smooth transfer & avoid packet loss to tcp
+			compensation := reorg.config.Latency - (int(_itimediff(currentMs(), timestamp)) - int(latency))
 
 			log.Println("compensation:", compensation)
 			select {
