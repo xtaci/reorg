@@ -246,8 +246,6 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func()) {
 				return
 			}
 
-			log.Println("pinged")
-
 			keepaliveTimer.Reset(time.Duration(reorg.config.KeepAlive/2) * time.Second)
 		case <-reorg.die:
 			return
