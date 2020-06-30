@@ -245,6 +245,7 @@ func main() {
 		log.Println("nodelay parameters:", config.NoDelay, config.Interval, config.Resend, config.NoCongestion)
 		log.Println("sndwnd:", config.SndWnd, "rcvwnd:", config.RcvWnd)
 		log.Println("mtu:", config.MTU)
+		log.Println("latency:", config.Latency)
 		log.Println("datashard:", config.DataShard, "parityshard:", config.ParityShard)
 		log.Println("sockbuf:", config.SockBuf)
 		log.Println("keepalive:", config.KeepAlive)

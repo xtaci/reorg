@@ -242,7 +242,7 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func()) {
 			// 2-bytes size
 			binary.LittleEndian.PutUint16(hdr, uint16(len(packet)))
 			// 4-bytes timestamp in secs
-			binary.LittleEndian.PutUint32(hdr[2:], uint32(time.Now().Unix()))
+			binary.LittleEndian.PutUint32(hdr[2:], uint32(currentMs()))
 			conn.SetWriteDeadline(time.Now().Add(keepalive))
 			n, err := conn.WriteBuffers([][]byte{hdr, packet})
 			if err != nil {
@@ -251,7 +251,7 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func()) {
 			}
 		case <-keepaliveTimer.C:
 			binary.LittleEndian.PutUint16(hdr, uint16(0)) // a zero-sized packet to keepalive
-			binary.LittleEndian.PutUint32(hdr[2:], uint32(time.Now().Unix()))
+			binary.LittleEndian.PutUint32(hdr[2:], uint32(currentMs()))
 			conn.SetWriteDeadline(time.Now().Add(keepalive))
 			n, err := conn.Write(hdr)
 			if err != nil {
