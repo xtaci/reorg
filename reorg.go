@@ -1,6 +1,7 @@
 package main
 
 import (
+	"container/heap"
 	"crypto/sha1"
 	"encoding/binary"
 	"io"
@@ -31,6 +32,13 @@ type Reorg struct {
 
 	die     chan struct{} // closing signal.
 	dieOnce sync.Once
+}
+
+// currentMs returns current elasped monotonic milliseconds since program startup
+func currentMs() uint32 { return uint32(time.Now().UnixNano() / int64(time.Millisecond)) }
+
+func _itimediff(later, earlier uint32) int32 {
+	return (int32)(later - earlier)
 }
 
 // NewReorg initialize a Reorg object for data exchanging between
@@ -84,7 +92,7 @@ func NewReorg(config *Config) *Reorg {
 	reorg := new(Reorg)
 	reorg.config = config
 	reorg.block = block
-	reorg.chDeviceIn = make(chan []byte, TUN_DEVICEQUEUE)
+	reorg.chDeviceIn = make(chan []byte)
 	reorg.chDeviceOut = make(chan delayedPacket, TUN_DEVICEQUEUE)
 	reorg.die = make(chan struct{})
 	reorg.iface = iface
@@ -145,7 +153,6 @@ func (reorg *Reorg) tunRX() {
 	}
 }
 
-/*
 // tunTX is a goroutine to delay the sending of incoming packet to a fixed interval,
 // this works as a low-phase filter for latency to mitigate system noise, such as:
 // scheduler's delay
@@ -194,7 +201,8 @@ func (reorg *Reorg) tunTX() {
 		}
 	}
 }
-*/
+
+/*
 func (reorg *Reorg) tunTX() {
 	ticker := time.NewTicker(time.Duration(reorg.config.Latency) * time.Millisecond)
 	defer ticker.Stop()
@@ -216,6 +224,7 @@ func (reorg *Reorg) tunTX() {
 		}
 	}
 }
+*/
 
 // kcpTX is a goroutine to carry packets from tun device to kcp session.
 func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func()) {
@@ -225,11 +234,15 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func()) {
 	keepaliveTimer := time.NewTimer(0)
 	defer keepaliveTimer.Stop()
 
-	hdr := make([]byte, 2)
+	hdr := make([]byte, 6)
+
 	for {
 		select {
 		case packet := <-reorg.chDeviceIn:
+			// 2-bytes size
 			binary.LittleEndian.PutUint16(hdr, uint16(len(packet)))
+			// 4-bytes timestamp in secs
+			binary.LittleEndian.PutUint32(hdr[2:], uint32(time.Now().Unix()))
 			conn.SetWriteDeadline(time.Now().Add(keepalive))
 			n, err := conn.WriteBuffers([][]byte{hdr, packet})
 			if err != nil {
@@ -238,6 +251,7 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func()) {
 			}
 		case <-keepaliveTimer.C:
 			binary.LittleEndian.PutUint16(hdr, uint16(0)) // a zero-sized packet to keepalive
+			binary.LittleEndian.PutUint32(hdr[2:], uint32(time.Now().Unix()))
 			conn.SetWriteDeadline(time.Now().Add(keepalive))
 			n, err := conn.Write(hdr)
 			if err != nil {
@@ -257,7 +271,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 	defer stopFunc()
 
 	keepalive := time.Duration(reorg.config.KeepAlive) * time.Second
-	hdr := make([]byte, 2)
+	hdr := make([]byte, 6)
 	for {
 		conn.SetReadDeadline(time.Now().Add(keepalive))
 		n, err := io.ReadFull(conn, hdr)
@@ -275,8 +289,13 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 				return
 			}
 
+			// a longer end-to-end pipe to smooth transfer & avoid packet loss to tcp
+			timestamp := binary.LittleEndian.Uint32(hdr[2:])
+			compensation := reorg.config.Latency - int(_itimediff(currentMs(), timestamp))
+
+			log.Println("compensation:", compensation)
 			select {
-			case reorg.chDeviceOut <- delayedPacket{payload, time.Now().Add(40 * time.Millisecond)}:
+			case reorg.chDeviceOut <- delayedPacket{payload, time.Now().Add(time.Duration(compensation) * time.Millisecond)}:
 			case <-reorg.die:
 				return
 			}
