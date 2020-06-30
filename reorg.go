@@ -197,7 +197,7 @@ func (reorg *Reorg) tunTX() {
 }
 */
 func (reorg *Reorg) tunTX() {
-	ticker := time.NewTicker(40 * time.Millisecond)
+	ticker := time.NewTicker(time.Duration(reorg.config.Latency) * time.Millisecond)
 	defer ticker.Stop()
 	var batch [][]byte
 	for {
