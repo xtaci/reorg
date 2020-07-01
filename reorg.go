@@ -109,7 +109,6 @@ func NewReorg(config *Config) *Reorg {
 func (reorg *Reorg) Serve() {
 	// spin-up tun-device reader/writer
 	go reorg.tunRX()
-	go reorg.tunRX()
 	go reorg.tunTX()
 
 	if reorg.config.Client {
