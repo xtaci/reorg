@@ -168,7 +168,7 @@ func (reorg *Reorg) tunTX() {
 		select {
 		case dp := <-reorg.chDeviceOut:
 			now := time.Now()
-			if now.After(dp.ts) {
+			if !now.Before(dp.ts) {
 				// already delayed! deliver immediately
 				// this might be caused by a scheduling delay
 				// or incorrectly setting latency
@@ -190,7 +190,7 @@ func (reorg *Reorg) tunTX() {
 		case now := <-timer.C:
 			drained = true
 			for packetHeap.Len() > 0 {
-				if now.After(packetHeap[0].ts) {
+				if !now.Before(packetHeap[0].ts) {
 					packet := heap.Pop(&packetHeap).(delayedPacket).packet
 					n, err := reorg.iface.Write(packet)
 					defaultAllocator.Put(packet) // put back after write
