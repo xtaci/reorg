@@ -22,6 +22,10 @@ const (
 	TUN_DEVICEQUEUE = 1024 // packet IO queue of device
 )
 
+const (
+	seqOffset = 2 // seq id offset in packet hdr
+)
+
 type orderedPacket struct {
 	packet []byte
 	seq    uint32 //packet sequence
@@ -222,17 +226,15 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 	keepaliveTimer := time.NewTimer(0)
 	defer keepaliveTimer.Stop()
 
-	hdr := make([]byte, 10)
+	hdr := make([]byte, 6)
 
 	for {
 		select {
 		case opacket := <-reorg.chDeviceIn:
 			// 2-bytes size
 			binary.LittleEndian.PutUint16(hdr, uint16(len(opacket.packet)))
-			// 4-bytes timestamp in secs
-			binary.LittleEndian.PutUint32(hdr[2:], uint32(currentMs()))
 			// 4-bytes seqid
-			binary.LittleEndian.PutUint32(hdr[6:], opacket.seq)
+			binary.LittleEndian.PutUint32(hdr[seqOffset:], opacket.seq)
 
 			// write data
 			conn.SetWriteDeadline(time.Now().Add(keepalive))
@@ -266,7 +268,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 	defer stopFunc()
 
 	keepalive := time.Duration(reorg.config.KeepAlive) * time.Second
-	hdr := make([]byte, 10)
+	hdr := make([]byte, 6)
 	for {
 		conn.SetReadDeadline(time.Now().Add(keepalive))
 		n, err := io.ReadFull(conn, hdr)
@@ -284,13 +286,9 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 				return
 			}
 
-			timestamp := binary.LittleEndian.Uint32(hdr[2:])
-			// a longer end-to-end pipe to smooth transfer & avoid packet loss to tcp
-			compensation := reorg.config.Latency - int(_itimediff(currentMs(), timestamp))
-
-			seq := binary.LittleEndian.Uint32(hdr[6:])
+			seq := binary.LittleEndian.Uint32(hdr[seqOffset:])
 			select {
-			case reorg.chDeviceOut <- delayedPacket{payload, seq, time.Now().Add(time.Duration(compensation) * time.Millisecond)}:
+			case reorg.chDeviceOut <- delayedPacket{payload, seq, time.Now().Add(time.Duration(reorg.config.Latency) * time.Millisecond)}:
 			case <-reorg.die:
 				return
 			}
