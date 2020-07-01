@@ -209,7 +209,7 @@ func (reorg *Reorg) tunTX() {
 }
 
 // kcpTX is a goroutine to carry packets from tun device to kcp session.
-func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func()) {
+func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan struct{}) {
 	defer stopFunc()
 	// tsc calibrate while starting
 	tsc.Calibrate()
@@ -246,6 +246,8 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func()) {
 			}
 
 			keepaliveTimer.Reset(time.Duration(reorg.config.KeepAlive/2) * time.Second)
+		case <-stopChan:
+			return
 		case <-reorg.die:
 			return
 		}
@@ -332,18 +334,18 @@ func (reorg *Reorg) client() {
 		conn := reorg.waitConn(reorg.config, reorg.block)
 		// the control struct
 		var stopOnce sync.Once
-		stopped := make(chan struct{})
+		stopChan := make(chan struct{})
 		stopFunc := func() {
 			stopOnce.Do(func() {
 				conn.Close()
-				close(stopped)
+				close(stopChan)
 			})
 		}
-		go reorg.kcpTX(conn, stopFunc)
+		go reorg.kcpTX(conn, stopFunc, stopChan)
 		go reorg.kcpRX(conn, stopFunc)
 
 		// wait for connection termination
-		<-stopped
+		<-stopChan
 	}
 }
 
@@ -395,7 +397,7 @@ func (reorg *Reorg) server() {
 			})
 		}
 
-		go reorg.kcpTX(conn, stopFunc)
+		go reorg.kcpTX(conn, stopFunc, nil)
 		go reorg.kcpRX(conn, stopFunc)
 	}
 }
