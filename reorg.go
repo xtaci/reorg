@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
@@ -23,15 +22,19 @@ const (
 	TUN_DEVICEQUEUE = 1024 // packet IO queue of device
 )
 
+type orderedPacket struct {
+	packet []byte
+	seq    uint32 //packet sequence
+}
+
 // Reorg defines a packet organizer to maximize throughput via configurable multiple links
 type Reorg struct {
 	config *Config        // the system config.
 	block  kcp.BlockCrypt // the initialized block cipher.
 
 	iface       *water.Interface   // tun device
-	chDeviceIn  chan []byte        // packets received from tun device will be delivered to this chan.
+	chDeviceIn  chan orderedPacket // packets received from tun device will be delivered to this chan.
 	chDeviceOut chan delayedPacket // packets from kcp session will be sent here awaiting to deliver to device
-	seq         uint32             // global output sequence number
 
 	die     chan struct{} // closing signal.
 	dieOnce sync.Once
@@ -94,7 +97,7 @@ func NewReorg(config *Config) *Reorg {
 	reorg := new(Reorg)
 	reorg.config = config
 	reorg.block = block
-	reorg.chDeviceIn = make(chan []byte, TUN_DEVICEQUEUE)
+	reorg.chDeviceIn = make(chan orderedPacket, TUN_DEVICEQUEUE)
 	reorg.chDeviceOut = make(chan delayedPacket, TUN_DEVICEQUEUE)
 	reorg.die = make(chan struct{})
 	reorg.iface = iface
@@ -138,6 +141,7 @@ func (reorg *Reorg) Close() {
 // tunRX is a goroutine for tun-device to receive incoming packets
 func (reorg *Reorg) tunRX() {
 	buffer := make([]byte, TUN_MTU)
+	var seq uint32
 	for {
 		n, err := reorg.iface.Read(buffer)
 		if err != nil {
@@ -149,7 +153,8 @@ func (reorg *Reorg) tunRX() {
 		copy(packet, buffer)
 
 		select {
-		case reorg.chDeviceIn <- packet:
+		case reorg.chDeviceIn <- orderedPacket{packet, seq}:
+			seq++
 		case <-reorg.die:
 			return
 		}
@@ -221,20 +226,19 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 
 	for {
 		select {
-		case packet := <-reorg.chDeviceIn:
+		case opacket := <-reorg.chDeviceIn:
 			// 2-bytes size
-			binary.LittleEndian.PutUint16(hdr, uint16(len(packet)))
+			binary.LittleEndian.PutUint16(hdr, uint16(len(opacket.packet)))
 			// 4-bytes timestamp in secs
 			binary.LittleEndian.PutUint32(hdr[2:], uint32(currentMs()))
 			// 4-bytes seqid
-			seq := atomic.AddUint32(&reorg.seq, 1)
-			binary.LittleEndian.PutUint32(hdr[6:], seq)
+			binary.LittleEndian.PutUint32(hdr[6:], opacket.seq)
 
 			// write data
 			conn.SetWriteDeadline(time.Now().Add(keepalive))
-			n, err := conn.WriteBuffers([][]byte{hdr, packet})
+			n, err := conn.WriteBuffers([][]byte{hdr, opacket.packet})
 			// return memory
-			defaultAllocator.Put(packet)
+			defaultAllocator.Put(opacket.packet)
 			if err != nil {
 				log.Println("kcpTX", "err", err, "n", n)
 				return
