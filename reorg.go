@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"io"
 	"log"
-	"math/rand"
 	"sync"
 	"time"
 
@@ -211,8 +210,6 @@ func (reorg *Reorg) tunTX() {
 // kcpTX is a goroutine to carry packets from tun device to kcp session.
 func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan struct{}) {
 	defer stopFunc()
-	// tsc calibrate while starting
-	tsc.Calibrate()
 
 	keepalive := time.Duration(reorg.config.KeepAlive) * time.Second
 	keepaliveTimer := time.NewTimer(0)
@@ -257,7 +254,6 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 // kcpRX is a goroutine to decapsualte incoming packets from kcp session to tun device.
 func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 	defer stopFunc()
-	noise := int(0.2 * float64(reorg.config.Latency))
 
 	keepalive := time.Duration(reorg.config.KeepAlive) * time.Second
 	hdr := make([]byte, 6)
@@ -280,7 +276,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 
 			timestamp := binary.LittleEndian.Uint32(hdr[2:])
 			// a longer end-to-end pipe to smooth transfer & avoid packet loss to tcp
-			compensation := reorg.config.Latency - int(_itimediff(currentMs(), timestamp)) + rand.Int()%noise - noise/2
+			compensation := reorg.config.Latency - int(_itimediff(currentMs(), timestamp))
 
 			select {
 			case reorg.chDeviceOut <- delayedPacket{payload, time.Now().Add(time.Duration(compensation) * time.Millisecond)}:
