@@ -31,7 +31,7 @@ type Reorg struct {
 	iface       *water.Interface   // tun device
 	chDeviceIn  chan []byte        // packets received from tun device will be delivered to this chan.
 	chDeviceOut chan delayedPacket // packets from kcp session will be sent here awaiting to deliver to device
-	seq         uint32             // global input sequence number
+	seq         uint32             // global output sequence number
 
 	die     chan struct{} // closing signal.
 	dieOnce sync.Once
@@ -217,7 +217,7 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 	keepaliveTimer := time.NewTimer(0)
 	defer keepaliveTimer.Stop()
 
-	hdr := make([]byte, 6)
+	hdr := make([]byte, 10)
 
 	for {
 		select {
@@ -226,6 +226,11 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 			binary.LittleEndian.PutUint16(hdr, uint16(len(packet)))
 			// 4-bytes timestamp in secs
 			binary.LittleEndian.PutUint32(hdr[2:], uint32(currentMs()))
+			// 4-bytes seqid
+			seq := atomic.AddUint32(&reorg.seq, 1)
+			binary.LittleEndian.PutUint32(hdr[6:], seq)
+
+			// write data
 			conn.SetWriteDeadline(time.Now().Add(keepalive))
 			n, err := conn.WriteBuffers([][]byte{hdr, packet})
 			// return memory
@@ -236,7 +241,6 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 			}
 		case <-keepaliveTimer.C:
 			binary.LittleEndian.PutUint16(hdr, uint16(0)) // a zero-sized packet to keepalive
-			binary.LittleEndian.PutUint32(hdr[2:], uint32(currentMs()))
 			conn.SetWriteDeadline(time.Now().Add(keepalive))
 			n, err := conn.Write(hdr)
 			if err != nil {
@@ -258,7 +262,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 	defer stopFunc()
 
 	keepalive := time.Duration(reorg.config.KeepAlive) * time.Second
-	hdr := make([]byte, 6)
+	hdr := make([]byte, 10)
 	for {
 		conn.SetReadDeadline(time.Now().Add(keepalive))
 		n, err := io.ReadFull(conn, hdr)
@@ -279,8 +283,8 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 			timestamp := binary.LittleEndian.Uint32(hdr[2:])
 			// a longer end-to-end pipe to smooth transfer & avoid packet loss to tcp
 			compensation := reorg.config.Latency - int(_itimediff(currentMs(), timestamp))
-			seq := atomic.AddUint32(&reorg.seq, 1)
 
+			seq := binary.LittleEndian.Uint32(hdr[6:])
 			select {
 			case reorg.chDeviceOut <- delayedPacket{payload, seq, time.Now().Add(time.Duration(compensation) * time.Millisecond)}:
 			case <-reorg.die:
