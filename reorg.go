@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
@@ -30,6 +31,7 @@ type Reorg struct {
 	iface       *water.Interface   // tun device
 	chDeviceIn  chan []byte        // packets received from tun device will be delivered to this chan.
 	chDeviceOut chan delayedPacket // packets from kcp session will be sent here awaiting to deliver to device
+	seq         uint32             // global input sequence number
 
 	die     chan struct{} // closing signal.
 	dieOnce sync.Once
@@ -277,9 +279,10 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 			timestamp := binary.LittleEndian.Uint32(hdr[2:])
 			// a longer end-to-end pipe to smooth transfer & avoid packet loss to tcp
 			compensation := reorg.config.Latency - int(_itimediff(currentMs(), timestamp))
+			seq := atomic.AddUint32(&reorg.seq, 1)
 
 			select {
-			case reorg.chDeviceOut <- delayedPacket{payload, time.Now().Add(time.Duration(compensation) * time.Millisecond)}:
+			case reorg.chDeviceOut <- delayedPacket{payload, seq, time.Now().Add(time.Duration(compensation) * time.Millisecond)}:
 			case <-reorg.die:
 				return
 			}
