@@ -56,6 +56,11 @@ func main() {
 			Value: "reorg",
 			Usage: "name of the tun device",
 		},
+		cli.IntFlag{
+			Name:  "latency",
+			Value: 20,
+			Usage: "latency for packet reorganization from multiple links",
+		},
 		cli.StringFlag{
 			Name:   "key",
 			Value:  "it's a secrect",
@@ -185,6 +190,7 @@ func main() {
 		config.Listen = c.String("listen")
 		config.RemoteAddr = c.String("remoteaddr")
 		config.Client = c.Bool("client")
+		config.Latency = c.Int("latency")
 		config.Tun = c.String("tun")
 		config.Key = c.String("key")
 		config.Crypt = c.String("crypt")
@@ -246,6 +252,7 @@ func main() {
 		log.Println("sndwnd:", config.SndWnd, "rcvwnd:", config.RcvWnd)
 		log.Println("tun:", config.Tun)
 		log.Println("KCP mtu:", config.MTU)
+		log.Println("latency:", config.Latency)
 		log.Println("datashard:", config.DataShard, "parityshard:", config.ParityShard)
 		log.Println("sockbuf:", config.SockBuf)
 		log.Println("keepalive:", config.KeepAlive)
