@@ -243,23 +243,9 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 
 	hdr := make([]byte, 10)
 
-	var lastPacketKCPTime time.Time
-	var lastPacketTunTime time.Time
 	for {
 		select {
 		case rpacket := <-reorg.chKcpTX:
-			now := time.Now()
-			if !lastPacketTunTime.IsZero() {
-				sendLatency := rpacket.ts.Sub(lastPacketTunTime)
-				kcpLatency := now.Sub(lastPacketKCPTime)
-				if kcpLatency < sendLatency {
-					diff := sendLatency - kcpLatency
-					<-time.After(diff)
-				}
-			}
-			lastPacketKCPTime = now
-			lastPacketTunTime = rpacket.ts
-
 			// 2-bytes size
 			binary.LittleEndian.PutUint16(hdr, uint16(len(rpacket.packet)))
 			// 4-bytes timestamp in secs
