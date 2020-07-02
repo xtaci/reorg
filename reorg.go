@@ -113,7 +113,6 @@ func (reorg *Reorg) Serve() {
 		// the client connections will re-new itself periodically
 		for i := 0; i < reorg.config.Conn; i++ {
 			go reorg.client()
-			<-time.After(20 * time.Millisecond)
 		}
 	} else {
 		// start server
@@ -392,6 +391,5 @@ func (reorg *Reorg) server() {
 
 		go reorg.kcpTX(conn, stopFunc, nil)
 		go reorg.kcpRX(conn, stopFunc)
-		<-time.After(20 * time.Millisecond)
 	}
 }
