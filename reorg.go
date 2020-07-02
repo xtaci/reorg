@@ -179,6 +179,32 @@ func (reorg *Reorg) balancer() {
 	}
 }
 
+/*
+func (reorg *Reorg) tunTX() {
+       var packetHeap delayedPacketHeap
+       timer := time.NewTimer(0)
+
+       for {
+               select {
+               case dp := <-reorg.chTunTX:
+                       heap.Push(&packetHeap, dp)
+               case <-timer.C:
+                       for packetHeap.Len() > 0 {
+                               packet := heap.Pop(&packetHeap).(reorgPacket).packet
+                               n, err := reorg.iface.Write(packet)
+                               defaultAllocator.Put(packet) // put back after write
+                               if err != nil {
+                                       log.Println("tunTX", "err", err, "n", n)
+                               }
+                       }
+                       timer.Reset(time.Duration(reorg.config.Latency/2) * time.Millisecond)
+               case <-reorg.die:
+                       return
+               }
+       }
+}
+*/
+
 // tunTX is a goroutine to delay the sending of incoming packet to a fixed interval,
 // this works as a low-phase filter for latency to mitigate system noise, such as:
 // scheduler's delay
@@ -191,25 +217,14 @@ func (reorg *Reorg) tunTX() {
 		select {
 		case dp := <-reorg.chTunTX:
 			now := currentMs()
-			if _itimediff(now, dp.ts) >= 0 {
-				// already delayed! deliver immediately
-				// this might be caused by a scheduling delay
-				// or incorrectly setting latency
-				n, err := reorg.iface.Write(dp.packet)
-				defaultAllocator.Put(dp.packet) // put back after write
-				if err != nil {
-					log.Println("tunTX", "err", err, "n", n)
-				}
-			} else {
-				heap.Push(&packetHeap, dp)
-				// properly reset timer to trigger based on the top element
-				stopped := timer.Stop()
-				if !stopped && !drained {
-					<-timer.C
-				}
-				timer.Reset(time.Duration(_itimediff(packetHeap[0].ts, now)) * time.Millisecond)
-				drained = false
+			heap.Push(&packetHeap, dp)
+			// properly reset timer to trigger based on the top element
+			stopped := timer.Stop()
+			if !stopped && !drained {
+				<-timer.C
 			}
+			timer.Reset(time.Duration(_itimediff(packetHeap[0].ts, now)) * time.Millisecond)
+			drained = false
 		case <-timer.C:
 			drained = true
 			for packetHeap.Len() > 0 {
@@ -306,8 +321,12 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 			// get sender's timestamp & compensate
 			timestamp := binary.LittleEndian.Uint32(hdr[2:])
 			seq := binary.LittleEndian.Uint32(hdr[6:])
+			compensation := reorg.config.Latency - int(_itimediff(currentMs(), timestamp))
+			if compensation < 0 {
+				compensation = 0
+			}
 			select {
-			case reorg.chTunTX <- reorgPacket{payload, seq, timestamp + uint32(reorg.config.Latency)}:
+			case reorg.chTunTX <- reorgPacket{payload, seq, timestamp + uint32(compensation)}:
 			case <-reorg.die:
 				return
 			}
