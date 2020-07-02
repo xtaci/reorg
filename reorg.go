@@ -1,7 +1,6 @@
 package main
 
 import (
-	"container/heap"
 	"crypto/sha1"
 	"encoding/binary"
 	"io"
@@ -183,49 +182,13 @@ func (reorg *Reorg) balancer() {
 // this works as a low-phase filter for latency to mitigate system noise, such as:
 // scheduler's delay
 func (reorg *Reorg) tunTX() {
-	var packetHeap delayedPacketHeap
-	timer := time.NewTimer(0)
-	drained := false
-
 	for {
 		select {
 		case dp := <-reorg.chTunTX:
-			now := currentMs()
-			if _itimediff(now, dp.ts) >= 0 {
-				// already delayed! deliver immediately
-				// this might be caused by a scheduling delay
-				// or incorrectly setting latency
-				n, err := reorg.iface.Write(dp.packet)
-				defaultAllocator.Put(dp.packet) // put back after write
-				if err != nil {
-					log.Println("tunTX", "err", err, "n", n)
-				}
-			} else {
-				heap.Push(&packetHeap, dp)
-				// properly reset timer to trigger based on the top element
-				stopped := timer.Stop()
-				if !stopped && !drained {
-					<-timer.C
-				}
-				timer.Reset(time.Duration(_itimediff(packetHeap[0].ts, now)) * time.Millisecond)
-				drained = false
-			}
-		case <-timer.C:
-			drained = true
-			for packetHeap.Len() > 0 {
-				now := currentMs()
-				if _itimediff(now, packetHeap[0].ts) >= 0 {
-					packet := heap.Pop(&packetHeap).(reorgPacket).packet
-					n, err := reorg.iface.Write(packet)
-					defaultAllocator.Put(packet) // put back after write
-					if err != nil {
-						log.Println("tunTX", "err", err, "n", n)
-					}
-				} else {
-					timer.Reset(time.Duration(_itimediff(packetHeap[0].ts, now)) * time.Millisecond)
-					drained = false
-					break
-				}
+			n, err := reorg.iface.Write(dp.packet)
+			defaultAllocator.Put(dp.packet) // put back after write
+			if err != nil {
+				log.Println("tunTX", "err", err, "n", n)
 			}
 		case <-reorg.die:
 			return
