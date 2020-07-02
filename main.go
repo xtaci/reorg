@@ -58,8 +58,8 @@ func main() {
 		},
 		cli.IntFlag{
 			Name:  "latency",
-			Value: 300,
-			Usage: "target latency for packet delivery and aggregation in(ms)",
+			Value: 20,
+			Usage: "latency for packet reorganization from multiple links",
 		},
 		cli.StringFlag{
 			Name:   "key",
