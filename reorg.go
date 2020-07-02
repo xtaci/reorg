@@ -113,6 +113,7 @@ func (reorg *Reorg) Serve() {
 		// the client connections will re-new itself periodically
 		for i := 0; i < reorg.config.Conn; i++ {
 			go reorg.client()
+			<-time.After(20 * time.Millisecond)
 		}
 	} else {
 		// start server
@@ -145,7 +146,7 @@ func (reorg *Reorg) tunRX() {
 		}
 
 		select {
-		case reorg.chBalancer <- reorgPacket{packet[:n], seq}:
+		case reorg.chBalancer <- reorgPacket{packet[:n], seq, currentMs()}:
 			seq++
 		case <-reorg.die:
 			return
@@ -184,21 +185,48 @@ func (reorg *Reorg) balancer() {
 func (reorg *Reorg) tunTX() {
 	var packetHeap delayedPacketHeap
 	timer := time.NewTimer(0)
+	drained := false
 
 	for {
 		select {
 		case dp := <-reorg.chTunTX:
-			heap.Push(&packetHeap, dp)
-		case <-timer.C:
-			for packetHeap.Len() > 0 {
-				packet := heap.Pop(&packetHeap).(reorgPacket).packet
-				n, err := reorg.iface.Write(packet)
-				defaultAllocator.Put(packet) // put back after write
+			now := currentMs()
+			if _itimediff(now, dp.ts) >= 0 {
+				// already delayed! deliver immediately
+				// this might be caused by a scheduling delay
+				// or incorrectly setting latency
+				n, err := reorg.iface.Write(dp.packet)
+				defaultAllocator.Put(dp.packet) // put back after write
 				if err != nil {
 					log.Println("tunTX", "err", err, "n", n)
 				}
+			} else {
+				heap.Push(&packetHeap, dp)
+				// properly reset timer to trigger based on the top element
+				stopped := timer.Stop()
+				if !stopped && !drained {
+					<-timer.C
+				}
+				timer.Reset(time.Duration(_itimediff(packetHeap[0].ts, now)) * time.Millisecond)
+				drained = false
 			}
-			timer.Reset(time.Duration(reorg.config.Latency))
+		case <-timer.C:
+			drained = true
+			for packetHeap.Len() > 0 {
+				now := currentMs()
+				if _itimediff(now, packetHeap[0].ts) >= 0 {
+					packet := heap.Pop(&packetHeap).(reorgPacket).packet
+					n, err := reorg.iface.Write(packet)
+					defaultAllocator.Put(packet) // put back after write
+					if err != nil {
+						log.Println("tunTX", "err", err, "n", n)
+					}
+				} else {
+					timer.Reset(time.Duration(_itimediff(packetHeap[0].ts, now)) * time.Millisecond)
+					drained = false
+					break
+				}
+			}
 		case <-reorg.die:
 			return
 		}
@@ -213,15 +241,17 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 	keepaliveTimer := time.NewTimer(0)
 	defer keepaliveTimer.Stop()
 
-	hdr := make([]byte, 6)
+	hdr := make([]byte, 10)
 
 	for {
 		select {
 		case rpacket := <-reorg.chKcpTX:
 			// 2-bytes size
 			binary.LittleEndian.PutUint16(hdr, uint16(len(rpacket.packet)))
+			// 4-bytes timestamp in secs
+			binary.LittleEndian.PutUint32(hdr[2:], rpacket.ts)
 			// 4-bytes seqid
-			binary.LittleEndian.PutUint32(hdr[2:], rpacket.seq)
+			binary.LittleEndian.PutUint32(hdr[6:], rpacket.seq)
 
 			// write data
 			conn.SetWriteDeadline(time.Now().Add(keepalive))
@@ -255,7 +285,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 	defer stopFunc()
 
 	keepalive := time.Duration(reorg.config.KeepAlive) * time.Second
-	hdr := make([]byte, 6)
+	hdr := make([]byte, 10)
 	for {
 		conn.SetReadDeadline(time.Now().Add(keepalive))
 		n, err := io.ReadFull(conn, hdr)
@@ -273,9 +303,11 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 				return
 			}
 
-			seq := binary.LittleEndian.Uint32(hdr[2:])
+			// get sender's timestamp & compensate
+			timestamp := binary.LittleEndian.Uint32(hdr[2:])
+			seq := binary.LittleEndian.Uint32(hdr[6:])
 			select {
-			case reorg.chTunTX <- reorgPacket{payload, seq}:
+			case reorg.chTunTX <- reorgPacket{payload, seq, timestamp + uint32(reorg.config.Latency)}:
 			case <-reorg.die:
 				return
 			}
@@ -391,5 +423,6 @@ func (reorg *Reorg) server() {
 
 		go reorg.kcpTX(conn, stopFunc, nil)
 		go reorg.kcpRX(conn, stopFunc)
+		<-time.After(20 * time.Millisecond)
 	}
 }
