@@ -11,37 +11,32 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/songgao/water"
-	"github.com/templexxx/tsc"
 	"github.com/xtaci/kcp-go/v5"
 	"github.com/xtaci/tcpraw"
 	"golang.org/x/crypto/pbkdf2"
 )
 
 const (
-	TUN_MTU         = 1500 // default tun-device MTU
-	TUN_DEVICEQUEUE = 1024 // packet IO queue of device
+	TUN_MTU      = 1500 // default tun-device MTU
+	PACKET_QUEUE = 1024 // packet IO queue of device
 )
-
-type orderedPacket struct {
-	packet []byte
-	seq    uint32 //packet sequence
-}
 
 // Reorg defines a packet organizer to maximize throughput via configurable multiple links
 type Reorg struct {
 	config *Config        // the system config.
 	block  kcp.BlockCrypt // the initialized block cipher.
 
-	iface       *water.Interface   // tun device
-	chDeviceIn  chan orderedPacket // packets received from tun device will be delivered to this chan.
-	chDeviceOut chan delayedPacket // packets from kcp session will be sent here awaiting to deliver to device
+	iface     *water.Interface // tun device
+	chReorder chan reorgPacket // channel to sort packets from different kcp session
+	chKcpTX   chan reorgPacket // packets received from tun device will be delivered to this chan.
+	chTunTX   chan reorgPacket // packets from kcp session will be sent here awaiting to deliver to device
 
 	die     chan struct{} // closing signal.
 	dieOnce sync.Once
 }
 
 // currentMs returns current elasped monotonic milliseconds since program startup
-func currentMs() uint32 { return uint32(tsc.UnixNano() / int64(time.Millisecond)) }
+func currentMs() uint32 { return uint32(time.Now().UnixNano() / int64(time.Millisecond)) }
 
 func _itimediff(later, earlier uint32) int32 {
 	return (int32)(later - earlier)
@@ -97,8 +92,9 @@ func NewReorg(config *Config) *Reorg {
 	reorg := new(Reorg)
 	reorg.config = config
 	reorg.block = block
-	reorg.chDeviceIn = make(chan orderedPacket, TUN_DEVICEQUEUE)
-	reorg.chDeviceOut = make(chan delayedPacket, TUN_DEVICEQUEUE)
+	reorg.chReorder = make(chan reorgPacket, PACKET_QUEUE)
+	reorg.chKcpTX = make(chan reorgPacket, PACKET_QUEUE)
+	reorg.chTunTX = make(chan reorgPacket, PACKET_QUEUE)
 	reorg.die = make(chan struct{})
 	reorg.iface = iface
 
@@ -110,6 +106,7 @@ func (reorg *Reorg) Serve() {
 	// spin-up tun-device reader/writer
 	go reorg.tunRX()
 	go reorg.tunTX()
+	go reorg.reorder()
 
 	if reorg.config.Client {
 		// client creates aggregator on tun
@@ -153,8 +150,35 @@ func (reorg *Reorg) tunRX() {
 		copy(packet, buffer)
 
 		select {
-		case reorg.chDeviceIn <- orderedPacket{packet, seq}:
+		case reorg.chKcpTX <- reorgPacket{packet, seq, time.Time{}}:
 			seq++
+		case <-reorg.die:
+			return
+		}
+	}
+}
+
+// reorder reorganize packets from different channels into a ordered sequence and deliver to tunTX
+func (reorg *Reorg) reorder() {
+	var packetHeap orderedPacketHeap
+	var nextSeqId uint32
+	for {
+		select {
+		case dp := <-reorg.chReorder:
+			heap.Push(&packetHeap, dp)
+			for packetHeap.Len() > 0 {
+				if packetHeap[0].seq == nextSeqId {
+					nextSeqId++
+					// send to tunTX
+					select {
+					case reorg.chTunTX <- heap.Pop(&packetHeap).(reorgPacket):
+					case <-reorg.die:
+						return
+					}
+				} else {
+					break
+				}
+			}
 		case <-reorg.die:
 			return
 		}
@@ -171,7 +195,7 @@ func (reorg *Reorg) tunTX() {
 
 	for {
 		select {
-		case dp := <-reorg.chDeviceOut:
+		case dp := <-reorg.chTunTX:
 			now := time.Now()
 			if !now.Before(dp.ts) {
 				// already delayed! deliver immediately
@@ -196,7 +220,7 @@ func (reorg *Reorg) tunTX() {
 			drained = true
 			for packetHeap.Len() > 0 {
 				if !now.Before(packetHeap[0].ts) {
-					packet := heap.Pop(&packetHeap).(delayedPacket).packet
+					packet := heap.Pop(&packetHeap).(reorgPacket).packet
 					n, err := reorg.iface.Write(packet)
 					defaultAllocator.Put(packet) // put back after write
 					if err != nil {
@@ -226,7 +250,7 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 
 	for {
 		select {
-		case opacket := <-reorg.chDeviceIn:
+		case opacket := <-reorg.chKcpTX:
 			// 2-bytes size
 			binary.LittleEndian.PutUint16(hdr, uint16(len(opacket.packet)))
 			// 4-bytes timestamp in secs
@@ -290,7 +314,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 
 			seq := binary.LittleEndian.Uint32(hdr[6:])
 			select {
-			case reorg.chDeviceOut <- delayedPacket{payload, seq, time.Now().Add(time.Duration(compensation) * time.Millisecond)}:
+			case reorg.chReorder <- reorgPacket{payload, seq, time.Now().Add(time.Duration(compensation) * time.Millisecond)}:
 			case <-reorg.die:
 				return
 			}
