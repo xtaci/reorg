@@ -145,9 +145,8 @@ func (reorg *Reorg) tunRX() {
 			log.Println("tunReader", "err", err, "n", n)
 		}
 
-		now := time.Now()
 		select {
-		case reorg.chBalancer <- reorgPacket{packet[:n], seq, now}:
+		case reorg.chBalancer <- reorgPacket{packet[:n], seq, currentMs()}:
 			seq++
 		case <-reorg.die:
 			return
@@ -191,8 +190,8 @@ func (reorg *Reorg) tunTX() {
 	for {
 		select {
 		case dp := <-reorg.chTunTX:
-			now := time.Now()
-			if !now.Before(dp.ts) {
+			now := currentMs()
+			if _itimediff(now, dp.ts) >= 0 {
 				// already delayed! deliver immediately
 				// this might be caused by a scheduling delay
 				// or incorrectly setting latency
@@ -208,13 +207,14 @@ func (reorg *Reorg) tunTX() {
 				if !stopped && !drained {
 					<-timer.C
 				}
-				timer.Reset(packetHeap[0].ts.Sub(now))
+				timer.Reset(time.Duration(_itimediff(packetHeap[0].ts, now)) * time.Millisecond)
 				drained = false
 			}
-		case now := <-timer.C:
+		case <-timer.C:
 			drained = true
 			for packetHeap.Len() > 0 {
-				if !now.Before(packetHeap[0].ts) {
+				now := currentMs()
+				if _itimediff(now, packetHeap[0].ts) >= 0 {
 					packet := heap.Pop(&packetHeap).(reorgPacket).packet
 					n, err := reorg.iface.Write(packet)
 					defaultAllocator.Put(packet) // put back after write
@@ -222,7 +222,7 @@ func (reorg *Reorg) tunTX() {
 						log.Println("tunTX", "err", err, "n", n)
 					}
 				} else {
-					timer.Reset(packetHeap[0].ts.Sub(now))
+					timer.Reset(time.Duration(_itimediff(packetHeap[0].ts, now)) * time.Millisecond)
 					drained = false
 					break
 				}
@@ -249,7 +249,7 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 			// 2-bytes size
 			binary.LittleEndian.PutUint16(hdr, uint16(len(rpacket.packet)))
 			// 4-bytes timestamp in secs
-			binary.LittleEndian.PutUint32(hdr[2:], uint32(rpacket.ts.UnixNano()/int64(time.Millisecond)))
+			binary.LittleEndian.PutUint32(hdr[2:], rpacket.ts)
 			// 4-bytes seqid
 			binary.LittleEndian.PutUint32(hdr[6:], rpacket.seq)
 
@@ -303,14 +303,11 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 				return
 			}
 
+			// get sender's timestamp & compensate
 			timestamp := binary.LittleEndian.Uint32(hdr[2:])
-			// a longer end-to-end pipe to smooth transfer & avoid packet loss to tcp
-			compensation := reorg.config.Latency - int(_itimediff(currentMs(), timestamp))
-			compensation = 300
-
 			seq := binary.LittleEndian.Uint32(hdr[6:])
 			select {
-			case reorg.chTunTX <- reorgPacket{payload, seq, time.Now().Add(time.Duration(compensation) * time.Millisecond)}:
+			case reorg.chTunTX <- reorgPacket{payload, seq, timestamp + uint32(reorg.config.Latency)}:
 			case <-reorg.die:
 				return
 			}
