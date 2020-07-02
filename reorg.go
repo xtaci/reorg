@@ -165,17 +165,41 @@ func (reorg *Reorg) tunRX() {
 	}
 }
 
-// tunTX reorganize packets from different channels into a ordered sequence
+// tunTX is a goroutine to delay the sending of incoming packet to a fixed interval,
+// this works as a low-phase filter for latency to mitigate system noise, such as:
+// scheduler's delay
 func (reorg *Reorg) tunTX() {
 	var packetHeap delayedPacketHeap
-	var nextSeqId uint32
+	timer := time.NewTimer(0)
+	drained := false
+
 	for {
 		select {
 		case dp := <-reorg.chDeviceOut:
-			heap.Push(&packetHeap, dp)
+			now := time.Now()
+			if !now.Before(dp.ts) {
+				// already delayed! deliver immediately
+				// this might be caused by a scheduling delay
+				// or incorrectly setting latency
+				n, err := reorg.iface.Write(dp.packet)
+				defaultAllocator.Put(dp.packet) // put back after write
+				if err != nil {
+					log.Println("tunTX", "err", err, "n", n)
+				}
+			} else {
+				heap.Push(&packetHeap, dp)
+				// properly reset timer to trigger based on the top element
+				stopped := timer.Stop()
+				if !stopped && !drained {
+					<-timer.C
+				}
+				timer.Reset(packetHeap[0].ts.Sub(now))
+				drained = false
+			}
+		case now := <-timer.C:
+			drained = true
 			for packetHeap.Len() > 0 {
-				if packetHeap[0].seq == nextSeqId {
-					nextSeqId++
+				if !now.Before(packetHeap[0].ts) {
 					packet := heap.Pop(&packetHeap).(delayedPacket).packet
 					n, err := reorg.iface.Write(packet)
 					defaultAllocator.Put(packet) // put back after write
@@ -183,6 +207,8 @@ func (reorg *Reorg) tunTX() {
 						log.Println("tunTX", "err", err, "n", n)
 					}
 				} else {
+					timer.Reset(packetHeap[0].ts.Sub(now))
+					drained = false
 					break
 				}
 			}
@@ -199,6 +225,7 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 	keepalive := time.Duration(reorg.config.KeepAlive) * time.Second
 	keepaliveTimer := time.NewTimer(0)
 	defer keepaliveTimer.Stop()
+
 	hdr := make([]byte, 6)
 
 	for {
@@ -261,7 +288,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 
 			seq := binary.LittleEndian.Uint32(hdr[seqOffset:])
 			select {
-			case reorg.chDeviceOut <- delayedPacket{payload, seq}:
+			case reorg.chDeviceOut <- delayedPacket{payload, seq, time.Now().Add(time.Duration(reorg.config.Latency) * time.Millisecond)}:
 			case <-reorg.die:
 				return
 			}

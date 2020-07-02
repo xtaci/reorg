@@ -1,8 +1,11 @@
 package main
 
+import "time"
+
 type delayedPacket struct {
 	packet []byte
 	seq    uint32 //packet sequence
+	ts     time.Time
 }
 
 // a heap for delayed packet
