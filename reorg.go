@@ -26,10 +26,10 @@ type Reorg struct {
 	config *Config        // the system config.
 	block  kcp.BlockCrypt // the initialized block cipher.
 
-	iface     *water.Interface // tun device
-	chReorder chan reorgPacket // channel to sort packets from different kcp session
-	chKcpTX   chan reorgPacket // packets received from tun device will be delivered to this chan.
-	chTunTX   chan reorgPacket // packets from kcp session will be sent here awaiting to deliver to device
+	iface      *water.Interface // tun device
+	chBalancer chan reorgPacket // packets received from tun device will be delivered to balancer
+	chKcpTX    chan reorgPacket // packets received from balancer will be delivered to this chan.
+	chTunTX    chan reorgPacket // packets from kcp session will be sent here awaiting to deliver to device
 
 	die     chan struct{} // closing signal.
 	dieOnce sync.Once
@@ -92,7 +92,7 @@ func NewReorg(config *Config) *Reorg {
 	reorg := new(Reorg)
 	reorg.config = config
 	reorg.block = block
-	reorg.chReorder = make(chan reorgPacket, PACKET_QUEUE)
+	reorg.chBalancer = make(chan reorgPacket, PACKET_QUEUE)
 	reorg.chKcpTX = make(chan reorgPacket, PACKET_QUEUE)
 	reorg.chTunTX = make(chan reorgPacket, PACKET_QUEUE)
 	reorg.die = make(chan struct{})
@@ -104,9 +104,9 @@ func NewReorg(config *Config) *Reorg {
 // Serve starts serving tunnel service
 func (reorg *Reorg) Serve() {
 	// spin-up tun-device reader/writer
+	go reorg.balancer()
 	go reorg.tunRX()
 	go reorg.tunTX()
-	go reorg.reorder()
 
 	if reorg.config.Client {
 		// client creates aggregator on tun
@@ -137,20 +137,17 @@ func (reorg *Reorg) Close() {
 
 // tunRX is a goroutine for tun-device to receive incoming packets
 func (reorg *Reorg) tunRX() {
-	buffer := make([]byte, TUN_MTU)
 	var seq uint32
 	for {
-		n, err := reorg.iface.Read(buffer)
+		packet := defaultAllocator.Get(TUN_MTU)
+		n, err := reorg.iface.Read(packet)
 		if err != nil {
 			log.Println("tunReader", "err", err, "n", n)
 		}
 
-		// make a copy and deliver
-		packet := defaultAllocator.Get(n)
-		copy(packet, buffer)
-
+		now := time.Now()
 		select {
-		case reorg.chKcpTX <- reorgPacket{packet, seq, time.Time{}}:
+		case reorg.chBalancer <- reorgPacket{packet[:n], seq, now}:
 			seq++
 		case <-reorg.die:
 			return
@@ -158,26 +155,24 @@ func (reorg *Reorg) tunRX() {
 	}
 }
 
-// reorder reorganize packets from different channels into a ordered sequence and deliver to tunTX
-func (reorg *Reorg) reorder() {
-	var packetHeap orderedPacketHeap
-	var nextSeqId uint32
+// balancer is a groutine to balance packets from tun to different kcp link
+func (reorg *Reorg) balancer() {
+	var reorgPackets []reorgPacket
+	var chKcpTX chan reorgPacket
+	var nextPacket reorgPacket
+
 	for {
 		select {
-		case dp := <-reorg.chReorder:
-			heap.Push(&packetHeap, dp)
-			for packetHeap.Len() > 0 {
-				if packetHeap[0].seq == nextSeqId {
-					nextSeqId++
-					// send to tunTX
-					select {
-					case reorg.chTunTX <- heap.Pop(&packetHeap).(reorgPacket):
-					case <-reorg.die:
-						return
-					}
-				} else {
-					break
-				}
+		case p := <-reorg.chBalancer:
+			reorgPackets = append(reorgPackets, p)
+			chKcpTX = reorg.chKcpTX
+			nextPacket = reorgPackets[0]
+		case chKcpTX <- nextPacket:
+			reorgPackets = reorgPackets[1:]
+			if len(reorgPackets) == 0 {
+				chKcpTX = nil // stop sending
+			} else {
+				nextPacket = reorgPackets[0]
 			}
 		case <-reorg.die:
 			return
@@ -248,21 +243,35 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 
 	hdr := make([]byte, 10)
 
+	var lastPacketKCPTime time.Time
+	var lastPacketTunTime time.Time
 	for {
 		select {
-		case opacket := <-reorg.chKcpTX:
+		case rpacket := <-reorg.chKcpTX:
+			now := time.Now()
+			if !lastPacketTunTime.IsZero() {
+				sendLatency := rpacket.ts.Sub(lastPacketTunTime)
+				kcpLatency := now.Sub(lastPacketKCPTime)
+				if kcpLatency < sendLatency {
+					diff := sendLatency - kcpLatency
+					<-time.After(diff)
+				}
+			}
+			lastPacketKCPTime = now
+			lastPacketTunTime = rpacket.ts
+
 			// 2-bytes size
-			binary.LittleEndian.PutUint16(hdr, uint16(len(opacket.packet)))
+			binary.LittleEndian.PutUint16(hdr, uint16(len(rpacket.packet)))
 			// 4-bytes timestamp in secs
-			binary.LittleEndian.PutUint32(hdr[2:], uint32(currentMs()))
+			binary.LittleEndian.PutUint32(hdr[2:], uint32(rpacket.ts.UnixNano()/int64(time.Millisecond)))
 			// 4-bytes seqid
-			binary.LittleEndian.PutUint32(hdr[6:], opacket.seq)
+			binary.LittleEndian.PutUint32(hdr[6:], rpacket.seq)
 
 			// write data
 			conn.SetWriteDeadline(time.Now().Add(keepalive))
-			n, err := conn.WriteBuffers([][]byte{hdr, opacket.packet})
+			n, err := conn.WriteBuffers([][]byte{hdr, rpacket.packet})
 			// return memory
-			defaultAllocator.Put(opacket.packet)
+			defaultAllocator.Put(rpacket.packet)
 			if err != nil {
 				log.Println("kcpTX", "err", err, "n", n)
 				return
@@ -311,10 +320,11 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 			timestamp := binary.LittleEndian.Uint32(hdr[2:])
 			// a longer end-to-end pipe to smooth transfer & avoid packet loss to tcp
 			compensation := reorg.config.Latency - int(_itimediff(currentMs(), timestamp))
+			compensation = 300
 
 			seq := binary.LittleEndian.Uint32(hdr[6:])
 			select {
-			case reorg.chReorder <- reorgPacket{payload, seq, time.Now().Add(time.Duration(compensation) * time.Millisecond)}:
+			case reorg.chTunTX <- reorgPacket{payload, seq, time.Now().Add(time.Duration(compensation) * time.Millisecond)}:
 			case <-reorg.die:
 				return
 			}
