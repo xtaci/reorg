@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/urfave/cli"
-	"github.com/xtaci/reorg/generic"
 )
 
 const (
@@ -261,7 +260,7 @@ func main() {
 		log.Println("snmpperiod:", config.SnmpPeriod)
 		log.Println("quiet:", config.Quiet)
 
-		go generic.SnmpLogger(config.SnmpLog, config.SnmpPeriod)
+		go SnmpLogger(config.SnmpLog, config.SnmpPeriod)
 
 		// start reorg
 		reorg := NewReorg(&config)
