@@ -365,13 +365,15 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 				return
 			}
 
-			// get sender's timestamp & compensate
+			// compensate the jitter according to the send time to make the latency smooth enough
+			// to avoid packet loss in variant TCP algorithm.
 			timestamp := binary.LittleEndian.Uint32(hdr[timestampOffset:])
 			seq := binary.LittleEndian.Uint32(hdr[seqOffset:])
 			compensation := reorg.config.Latency - int(_itimediff(currentMs(), timestamp))
 			if compensation < 0 {
 				compensation = 0
 			}
+
 			select {
 			case reorg.chTunTX <- reorgPacket{payload, seq, timestamp + uint32(compensation)}:
 			case <-reorg.die:
