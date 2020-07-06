@@ -251,7 +251,7 @@ func (reorg *Reorg) tunTX() {
 
 // tunTX is a goroutine to delay the sending of incoming packet to a fixed interval,
 // this works as a low-phase filter for latency to mitigate system noise, such as:
-// scheduler's delay
+// scheduler's delay, buffer-bloat and lost-recovery in FEC
 func (reorg *Reorg) tunTX() {
 	var packetHeap delayedPacketHeap
 	timer := time.NewTimer(0)
@@ -262,13 +262,16 @@ func (reorg *Reorg) tunTX() {
 		case dp := <-reorg.chTunTX:
 			now := currentMs()
 			heap.Push(&packetHeap, dp)
-			// properly reset timer to trigger based on the top element
-			stopped := timer.Stop()
-			if !stopped && !drained {
-				<-timer.C
+			if dp.seq != packetHeap[0].seq {
+				// if the new packet insertion has changed the top element
+				stopped := timer.Stop()
+				if !stopped && !drained {
+					<-timer.C
+				}
+				// properly reset timer to trigger based on the new top element
+				timer.Reset(time.Duration(_itimediff(packetHeap[0].ts, now)) * time.Millisecond)
+				drained = false
 			}
-			timer.Reset(time.Duration(_itimediff(packetHeap[0].ts, now)) * time.Millisecond)
-			drained = false
 		case <-timer.C:
 			drained = true
 			for packetHeap.Len() > 0 {
