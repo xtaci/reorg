@@ -18,7 +18,12 @@ import (
 )
 
 const (
-	PACKET_QUEUE = 1024 // packet IO queue of device
+	DefaultPacketQueue = 1024 // packet IO queue of device
+)
+
+const (
+	DefaultClientTunIP = "10.1.0.2/24"
+	DefaultServerTunIP = "10.1.0.1/24"
 )
 
 const (
@@ -101,10 +106,10 @@ func NewReorg(config *Config) *Reorg {
 	tundevice, _ := netlink.LinkByName(config.Tun)
 	var addr *netlink.Addr
 	if config.TunIP == "" {
-		if config.Client { // default address to 10.1.0.2 as client, and 10.1.0.1 as servr
-			addr, _ = netlink.ParseAddr("10.1.0.2/24")
+		if config.Client { // default address to 10.1.0.2 as client, and 10.1.0.1 as server
+			addr, _ = netlink.ParseAddr(DefaultClientTunIP)
 		} else {
-			addr, _ = netlink.ParseAddr("10.1.0.1/24")
+			addr, _ = netlink.ParseAddr(DefaultServerTunIP)
 		}
 		netlink.AddrAdd(tundevice, addr)
 	} else {
@@ -129,9 +134,9 @@ func NewReorg(config *Config) *Reorg {
 	reorg := new(Reorg)
 	reorg.config = config
 	reorg.block = block
-	reorg.chBalancer = make(chan reorgPacket, PACKET_QUEUE)
-	reorg.chKcpTX = make(chan reorgPacket, PACKET_QUEUE)
-	reorg.chTunTX = make(chan reorgPacket, PACKET_QUEUE)
+	reorg.chBalancer = make(chan reorgPacket, DefaultPacketQueue)
+	reorg.chKcpTX = make(chan reorgPacket, DefaultPacketQueue)
+	reorg.chTunTX = make(chan reorgPacket, DefaultPacketQueue)
 	reorg.die = make(chan struct{})
 	reorg.iface = iface
 	reorg.linkmtu = linkmtu
