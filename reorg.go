@@ -299,7 +299,7 @@ func (reorg *Reorg) tunTX() {
 func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan struct{}) {
 	defer stopFunc()
 
-	keepalive := time.Duration(reorg.config.KeepAlive) * time.Second
+	timeout := time.Duration(reorg.config.KeepAlive/2) * time.Second
 	keepaliveTimer := time.NewTimer(0)
 	defer keepaliveTimer.Stop()
 
@@ -316,7 +316,7 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 			binary.LittleEndian.PutUint32(hdr[seqOffset:], rpacket.seq)
 
 			// write data
-			conn.SetWriteDeadline(time.Now().Add(keepalive))
+			conn.SetWriteDeadline(time.Now().Add(timeout))
 			n, err := conn.WriteBuffers([][]byte{hdr, rpacket.packet})
 			// return memory
 			defaultAllocator.Put(rpacket.packet)
@@ -326,14 +326,14 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 			}
 		case <-keepaliveTimer.C:
 			binary.LittleEndian.PutUint16(hdr, uint16(0)) // a zero-sized packet to keepalive
-			conn.SetWriteDeadline(time.Now().Add(keepalive))
+			conn.SetWriteDeadline(time.Now().Add(timeout))
 			n, err := conn.Write(hdr)
 			if err != nil {
 				log.Println("kcpTX", "err", err, "n", n)
 				return
 			}
 
-			keepaliveTimer.Reset(time.Duration(reorg.config.KeepAlive/2) * time.Second)
+			keepaliveTimer.Reset(timeout)
 		case <-stopChan:
 			return
 		case <-reorg.die:
@@ -346,10 +346,10 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 	defer stopFunc()
 
-	keepalive := time.Duration(reorg.config.KeepAlive) * time.Second
+	timeout := time.Duration(reorg.config.KeepAlive) * time.Second
 	hdr := make([]byte, hdrSize)
 	for {
-		conn.SetReadDeadline(time.Now().Add(keepalive))
+		conn.SetReadDeadline(time.Now().Add(timeout))
 		n, err := io.ReadFull(conn, hdr)
 		if err != nil {
 			log.Println("kcpRX", "err", err, "n", n)
@@ -357,7 +357,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 		}
 
 		size := binary.LittleEndian.Uint16(hdr)
-		if size > 0 { // non-keepalive
+		if size > 0 { // payload
 			payload := defaultAllocator.Get(int(size))
 			n, err = io.ReadFull(conn, payload)
 			if err != nil {
@@ -417,7 +417,7 @@ func (reorg *Reorg) waitConn(config *Config, block kcp.BlockCrypt) *kcp.UDPSessi
 	}
 }
 
-// start as client
+// start as client, client will respwan itself if stopped
 func (reorg *Reorg) client() {
 	for {
 		// establish UDP connection
