@@ -483,13 +483,15 @@ func (reorg *Reorg) server() {
 
 		// the control struct
 		var stopOnce sync.Once
+		stopChan := make(chan struct{})
 		stopFunc := func() {
 			stopOnce.Do(func() {
 				conn.Close()
+				close(stopChan)
 			})
 		}
 
-		go reorg.kcpTX(conn, stopFunc, nil)
+		go reorg.kcpTX(conn, stopFunc, stopChan)
 		go reorg.kcpRX(conn, stopFunc)
 	}
 }
