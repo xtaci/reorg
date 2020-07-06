@@ -11,6 +11,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/songgao/water"
+	"github.com/vishvananda/netlink"
 	"github.com/xtaci/kcp-go/v5"
 	"github.com/xtaci/tcpraw"
 	"golang.org/x/crypto/pbkdf2"
@@ -21,7 +22,12 @@ const (
 	PACKET_QUEUE = 1024 // packet IO queue of device
 )
 
-// Reorg defines a packet organizer to maximize throughput via configurable multiple links
+const (
+	HDR_SIZE = 10 // extra header size for each packet
+)
+
+// Reorg defines a packet organizer to add extra latency in exchange for smoothness and throughput
+// from multiple link
 type Reorg struct {
 	config *Config        // the system config.
 	block  kcp.BlockCrypt // the initialized block cipher.
@@ -87,6 +93,32 @@ func NewReorg(config *Config) *Reorg {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// config the tun device's ip and mtu
+	tundevice, _ := netlink.LinkByName(config.Tun)
+	var addr *netlink.Addr
+	if config.TunIP == "" {
+		if config.Client { // default address to 10.1.0.2 as client, and 10.1.0.1 as servr
+			addr, _ = netlink.ParseAddr("10.1.0.2/24")
+		} else {
+			addr, _ = netlink.ParseAddr("10.1.0.1/24")
+		}
+		netlink.AddrAdd(tundevice, addr)
+	} else {
+		addr, err = netlink.ParseAddr(config.TunIP)
+		if err != nil {
+			log.Fatal("netlink.ParseAddr", "err", err)
+		}
+	}
+	// set address
+	netlink.AddrAdd(tundevice, addr)
+	// set mtu
+	linkmtu := config.MTU - HDR_SIZE
+	netlink.LinkSetMTU(tundevice, linkmtu)
+
+	log.Println("TUN interface name:", config.Tun)
+	log.Println("TUN device MTU:", linkmtu)
+	log.Println("TUN device IP:", addr)
 
 	// create the object
 	reorg := new(Reorg)
