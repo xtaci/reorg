@@ -18,7 +18,6 @@ import (
 )
 
 const (
-	TUN_MTU      = 1500 // default tun-device MTU
 	PACKET_QUEUE = 1024 // packet IO queue of device
 )
 
@@ -34,7 +33,9 @@ type Reorg struct {
 	config *Config        // the system config.
 	block  kcp.BlockCrypt // the initialized block cipher.
 
-	iface      *water.Interface // tun device
+	iface   *water.Interface // tun device
+	linkmtu int              // the link mtu of this tun device
+
 	chBalancer chan reorgPacket // packets received from tun device will be delivered to balancer
 	chKcpTX    chan reorgPacket // packets received from balancer will be delivered to this chan.
 	chTunTX    chan reorgPacket // packets from kcp session will be sent here awaiting to deliver to device
@@ -133,6 +134,7 @@ func NewReorg(config *Config) *Reorg {
 	reorg.chTunTX = make(chan reorgPacket, PACKET_QUEUE)
 	reorg.die = make(chan struct{})
 	reorg.iface = iface
+	reorg.linkmtu = linkmtu
 
 	return reorg
 }
@@ -173,15 +175,19 @@ func (reorg *Reorg) Close() {
 // tunRX is a goroutine for tun-device to receive incoming packets
 func (reorg *Reorg) tunRX() {
 	var seq uint32
+	buffer := make([]byte, reorg.linkmtu)
 	for {
-		packet := defaultAllocator.Get(TUN_MTU)
-		n, err := reorg.iface.Read(packet)
+		n, err := reorg.iface.Read(buffer[:])
 		if err != nil {
 			log.Println("tunReader", "err", err, "n", n)
 		}
 
+		// create a copy of packets with closest buffer size to avoid wasting memory
+		packet := defaultAllocator.Get(n)
+		copy(packet, buffer)
+
 		select {
-		case reorg.chBalancer <- reorgPacket{packet[:n], seq, currentMs()}:
+		case reorg.chBalancer <- reorgPacket{packet, seq, currentMs()}:
 			seq++
 		case <-reorg.die:
 			return
@@ -198,15 +204,17 @@ func (reorg *Reorg) balancer() {
 	for {
 		select {
 		case p := <-reorg.chBalancer:
+			// accept all packets from tun to prevent from packet lost while tun txqueue becomes full
 			reorgPackets = append(reorgPackets, p)
 			chKcpTX = reorg.chKcpTX
 			nextPacket = reorgPackets[0]
 		case chKcpTX <- nextPacket:
+			// distribute packets evenly into kcp sessions via channel
 			reorgPackets = reorgPackets[1:]
-			if len(reorgPackets) == 0 {
-				chKcpTX = nil // stop sending
-			} else {
+			if len(reorgPackets) != 0 {
 				nextPacket = reorgPackets[0]
+			} else {
+				chKcpTX = nil // stop sending by setting chan to nil
 			}
 		case <-reorg.die:
 			return

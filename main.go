@@ -246,6 +246,7 @@ func main() {
 		if config.KeepAlive == 0 {
 			log.Fatal("keepalive must be postive")
 		}
+
 		log.Println("encryption:", config.Crypt)
 		log.Println("nodelay parameters:", config.NoDelay, config.Interval, config.Resend, config.NoCongestion)
 		log.Println("sndwnd:", config.SndWnd, "rcvwnd:", config.RcvWnd)
@@ -260,6 +261,7 @@ func main() {
 		log.Println("snmpperiod:", config.SnmpPeriod)
 		log.Println("quiet:", config.Quiet)
 
+		// start snmp logger
 		go SnmpLogger(config.SnmpLog, config.SnmpPeriod)
 
 		// start reorg
