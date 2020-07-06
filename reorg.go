@@ -250,8 +250,8 @@ func (reorg *Reorg) tunTX() {
 */
 
 // tunTX is a goroutine to delay the sending of incoming packet to a fixed interval,
-// this works as a low-phase filter for latency to mitigate system noise, such as:
-// scheduler's delay, buffer-bloat and lost-recovery in FEC
+// this works as a low-pass filter for latency deviation to mitigate types of noise, such as:
+// runtime scheduler's delay, buffer-bloat in AQM and lost-recovery packet drift in FEC.
 func (reorg *Reorg) tunTX() {
 	var packetHeap delayedPacketHeap
 	timer := time.NewTimer(0)
