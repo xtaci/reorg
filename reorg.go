@@ -23,7 +23,9 @@ const (
 )
 
 const (
-	HDR_SIZE = 10 // extra header size for each packet
+	hdrSize         = 10 // extra header size for each packet
+	timestampOffset = 2
+	seqOffset       = 6
 )
 
 // Reorg defines a packet organizer to add extra latency in exchange for smoothness and throughput
@@ -113,7 +115,7 @@ func NewReorg(config *Config) *Reorg {
 	// set address
 	netlink.AddrAdd(tundevice, addr)
 	// set mtu
-	linkmtu := config.MTU - HDR_SIZE
+	linkmtu := config.MTU - hdrSize
 	netlink.LinkSetMTU(tundevice, linkmtu)
 	// set up
 	netlink.LinkSetUp(tundevice)
@@ -147,7 +149,6 @@ func (reorg *Reorg) Serve() {
 		// the client connections will re-new itself periodically
 		for i := 0; i < reorg.config.Conn; i++ {
 			go reorg.client()
-			<-time.After(20 * time.Millisecond)
 		}
 	} else {
 		// start server
@@ -214,6 +215,7 @@ func (reorg *Reorg) balancer() {
 }
 
 /*
+// a test deliver with high jitter
 func (reorg *Reorg) tunTX() {
        var packetHeap delayedPacketHeap
        timer := time.NewTimer(0)
@@ -266,7 +268,7 @@ func (reorg *Reorg) tunTX() {
 				if _itimediff(now, packetHeap[0].ts) >= 0 {
 					packet := heap.Pop(&packetHeap).(reorgPacket).packet
 					n, err := reorg.iface.Write(packet)
-					defaultAllocator.Put(packet) // put back after write
+					defaultAllocator.Put(packet) // recycle after write
 					if err != nil {
 						log.Println("tunTX", "err", err, "n", n)
 					}
@@ -290,7 +292,7 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 	keepaliveTimer := time.NewTimer(0)
 	defer keepaliveTimer.Stop()
 
-	hdr := make([]byte, 10)
+	hdr := make([]byte, hdrSize)
 
 	for {
 		select {
@@ -298,9 +300,9 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 			// 2-bytes size
 			binary.LittleEndian.PutUint16(hdr, uint16(len(rpacket.packet)))
 			// 4-bytes timestamp in secs
-			binary.LittleEndian.PutUint32(hdr[2:], rpacket.ts)
+			binary.LittleEndian.PutUint32(hdr[timestampOffset:], rpacket.ts)
 			// 4-bytes seqid
-			binary.LittleEndian.PutUint32(hdr[6:], rpacket.seq)
+			binary.LittleEndian.PutUint32(hdr[seqOffset:], rpacket.seq)
 
 			// write data
 			conn.SetWriteDeadline(time.Now().Add(keepalive))
@@ -334,7 +336,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 	defer stopFunc()
 
 	keepalive := time.Duration(reorg.config.KeepAlive) * time.Second
-	hdr := make([]byte, 10)
+	hdr := make([]byte, hdrSize)
 	for {
 		conn.SetReadDeadline(time.Now().Add(keepalive))
 		n, err := io.ReadFull(conn, hdr)
@@ -353,8 +355,8 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 			}
 
 			// get sender's timestamp & compensate
-			timestamp := binary.LittleEndian.Uint32(hdr[2:])
-			seq := binary.LittleEndian.Uint32(hdr[6:])
+			timestamp := binary.LittleEndian.Uint32(hdr[timestampOffset:])
+			seq := binary.LittleEndian.Uint32(hdr[seqOffset:])
 			compensation := reorg.config.Latency - int(_itimediff(currentMs(), timestamp))
 			if compensation < 0 {
 				compensation = 0
@@ -476,6 +478,5 @@ func (reorg *Reorg) server() {
 
 		go reorg.kcpTX(conn, stopFunc, nil)
 		go reorg.kcpRX(conn, stopFunc)
-		<-time.After(20 * time.Millisecond)
 	}
 }

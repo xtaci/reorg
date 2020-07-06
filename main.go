@@ -93,7 +93,7 @@ func main() {
 		},
 		cli.IntFlag{
 			Name:  "mtu",
-			Value: 1350,
+			Value: 1400,
 			Usage: "set maximum transmission unit for UDP packets",
 		},
 		cli.IntFlag{
