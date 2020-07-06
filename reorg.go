@@ -115,6 +115,8 @@ func NewReorg(config *Config) *Reorg {
 	// set mtu
 	linkmtu := config.MTU - HDR_SIZE
 	netlink.LinkSetMTU(tundevice, linkmtu)
+	// set up
+	netlink.LinkSetUp(tundevice)
 
 	log.Println("TUN interface name:", config.Tun)
 	log.Println("TUN device MTU:", linkmtu)
