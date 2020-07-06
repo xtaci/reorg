@@ -427,7 +427,8 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 			// to avoid packet loss in variant TCP algorithm.
 			timestamp := binary.LittleEndian.Uint32(hdr[timestampOffset:])
 			seq := binary.LittleEndian.Uint32(hdr[seqOffset:])
-			rto := reorg.updateRTO(_itimediff(currentMs(), timestamp) * 2)
+			rto := reorg.updateRTO(_itimediff(currentMs(), timestamp) << 1)
+			log.Println("RTO:", rto)
 
 			select {
 			case reorg.chTunTX <- reorgPacket{payload, seq, timestamp + rto}:
