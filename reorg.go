@@ -28,7 +28,7 @@ const (
 
 const (
 	// RTT estimation
-	reorgRTOMin = 200   // 200ms
+	reorgRTOMin = 20    // 20ms
 	reorgRTOMax = 60000 // 60s
 )
 
@@ -427,8 +427,12 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 			// to avoid packet loss in variant TCP algorithm.
 			timestamp := binary.LittleEndian.Uint32(hdr[timestampOffset:])
 			seq := binary.LittleEndian.Uint32(hdr[seqOffset:])
-			rto := reorg.updateRTO(_itimediff(currentMs(), timestamp) << 1)
-			log.Println("RTO:", rto)
+			latency := _itimediff(currentMs(), timestamp)
+			if latency < 0 {
+				latency = 1
+			}
+			rto := reorg.updateRTO(latency * 2)
+			log.Println("RTO:", rto, "latency:", latency)
 
 			select {
 			case reorg.chTunTX <- reorgPacket{payload, seq, timestamp + rto}:
