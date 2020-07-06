@@ -27,13 +27,6 @@ const (
 )
 
 const (
-	// RTT estimation
-	reorgRTOMin = 20    // 20ms
-	reorgRTOMax = 60000 // 60s
-	maxLatency  = 1000  // ms
-)
-
-const (
 	hdrSize         = 10 // extra header size for each packet
 	timestampOffset = 2
 	seqOffset       = 6
@@ -65,22 +58,6 @@ func currentMs() uint32 { return uint32(time.Now().UnixNano() / int64(time.Milli
 
 func _itimediff(later, earlier uint32) int32 {
 	return (int32)(later - earlier)
-}
-
-func _imax_(a, b uint32) uint32 {
-	if a >= b {
-		return a
-	}
-	return b
-}
-func _imin_(a, b uint32) uint32 {
-	if a <= b {
-		return a
-	}
-	return b
-}
-func _ibound_(lower, middle, upper uint32) uint32 {
-	return _imin_(_imax_(lower, middle), upper)
 }
 
 // NewReorg initialize a Reorg object for data exchanging between
@@ -281,33 +258,6 @@ func (reorg *Reorg) tunTX() {
 }
 */
 
-func (reorg *Reorg) updateRTO(rtt int32) uint32 {
-	reorg.rx_mu.Lock()
-	defer reorg.rx_mu.Unlock()
-	// https://tools.ietf.org/html/rfc6298
-	var rto uint32
-	if reorg.rx_srtt == 0 {
-		reorg.rx_srtt = rtt
-		reorg.rx_rttvar = rtt >> 1
-	} else {
-		delta := rtt - reorg.rx_srtt
-		reorg.rx_srtt += delta >> 3
-		if delta < 0 {
-			delta = -delta
-		}
-		if rtt < reorg.rx_srtt-reorg.rx_rttvar {
-			// if the new RTT sample is below the bottom of the range of
-			// what an RTT measurement is expected to be.
-			// give an 8x reduced weight versus its normal weighting
-			reorg.rx_rttvar += (delta - reorg.rx_rttvar) >> 5
-		} else {
-			reorg.rx_rttvar += (delta - reorg.rx_rttvar) >> 2
-		}
-	}
-	rto = uint32(reorg.rx_srtt) + uint32(reorg.rx_rttvar)<<2
-	return _ibound_(reorgRTOMin, rto, reorgRTOMax)
-}
-
 // tunTX is a goroutine to delay the sending of incoming packet to a fixed interval,
 // this works as a low-pass filter for latency deviation to mitigate types of noise, such as:
 // runtime scheduler's delay, buffer-bloat in AQM and lost-recovery packet drift in FEC.
@@ -404,7 +354,7 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 // kcpRX is a goroutine to decapsualte incoming packets from kcp session to tun device.
 func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 	defer stopFunc()
-
+	var movingAVG []uint32
 	timeout := time.Duration(reorg.config.KeepAlive) * time.Second
 	hdr := make([]byte, hdrSize)
 	for {
@@ -428,21 +378,21 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 			// to avoid packet loss in variant TCP algorithm.
 			timestamp := binary.LittleEndian.Uint32(hdr[timestampOffset:])
 			seq := binary.LittleEndian.Uint32(hdr[seqOffset:])
-			latency := _itimediff(currentMs(), timestamp)
-			if latency < 0 {
-				latency = 1
+			// calculate moving average of the RTO
+			rto := conn.GetRTO()
+			movingAVG = append(movingAVG, rto)
+			if len(movingAVG) > 128 {
+				movingAVG = movingAVG[1:]
 			}
 
-			var rto uint32
-			if latency < maxLatency {
-				rto = reorg.updateRTO(latency * 2)
-				log.Println("RTO:", rto, "latency:", latency)
-			} else {
-				log.Println("please use ntpdate to sync clock")
+			var total uint32
+			for k := range movingAVG {
+				total += movingAVG[k]
 			}
+			smoothed := total / uint32(len(movingAVG))
 
 			select {
-			case reorg.chTunTX <- reorgPacket{payload, seq, timestamp + rto}:
+			case reorg.chTunTX <- reorgPacket{payload, seq, timestamp + smoothed}:
 			case <-reorg.die:
 				return
 			}
