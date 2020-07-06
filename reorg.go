@@ -30,6 +30,7 @@ const (
 	// RTT estimation
 	reorgRTOMin = 20    // 20ms
 	reorgRTOMax = 60000 // 60s
+	maxLatency  = 1000  // ms
 )
 
 const (
@@ -431,8 +432,14 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 			if latency < 0 {
 				latency = 1
 			}
-			rto := reorg.updateRTO(latency * 2)
-			log.Println("RTO:", rto, "latency:", latency)
+
+			var rto uint32
+			if latency < maxLatency {
+				rto = reorg.updateRTO(latency * 2)
+				log.Println("RTO:", rto, "latency:", latency)
+			} else {
+				log.Println("please use ntpdate to sync clock")
+			}
 
 			select {
 			case reorg.chTunTX <- reorgPacket{payload, seq, timestamp + rto}:
