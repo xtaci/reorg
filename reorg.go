@@ -262,7 +262,7 @@ func (reorg *Reorg) tunTX() {
 		case dp := <-reorg.chTunTX:
 			now := currentMs()
 			heap.Push(&packetHeap, dp)
-			if dp.seq == packetHeap[0].seq || packetHeap.Len() == 0 {
+			if dp.seq == packetHeap[0].seq {
 				// if the new packet insertion has changed the top element
 				stopped := timer.Stop()
 				if !stopped && !drained {
