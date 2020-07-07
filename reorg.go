@@ -372,18 +372,26 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 
 			// compensate the jitter according to the send time to make the latency smooth enough
 			// to avoid packet loss in variant TCP algorithm.
-			seq := binary.LittleEndian.Uint32(hdr[seqOffset:])
+			//seq := binary.LittleEndian.Uint32(hdr[seqOffset:])
 			// calculate moving average of the RTO
 			rto := conn.GetRTO()
 			if rto > uint32(reorg.config.MaxLatency) {
 				rto = uint32(reorg.config.MaxLatency)
 			}
 
-			select {
-			case reorg.chTunTX <- reorgPacket{payload, seq, currentMs() + rto}:
-			case <-reorg.die:
-				return
+			n, err := reorg.iface.Write(payload)
+			defaultAllocator.Put(payload) // recycle after write
+			if err != nil {
+				log.Println("tunTX", "err", err, "n", n)
 			}
+
+			/*
+				select {
+				case reorg.chTunTX <- reorgPacket{payload, seq, currentMs() + rto}:
+				case <-reorg.die:
+					return
+				}
+			*/
 		}
 	}
 }
