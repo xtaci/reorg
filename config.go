@@ -12,7 +12,7 @@ type Config struct {
 	RemoteAddr   string `json:"remoteaddr"`
 	Tun          string `json:"tun"`
 	TunIP        string `json:"tunip"`
-	MaxLatency   int    `json:"MaxLatency"`
+	Latency      int    `json:"Latency"`
 	Key          string `json:"key"`
 	Crypt        string `json:"crypt"`
 	Mode         string `json:"mode"`

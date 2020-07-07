@@ -56,9 +56,9 @@ func main() {
 			Usage: "name of the tun device",
 		},
 		cli.IntFlag{
-			Name:  "maxlatency",
-			Value: 300,
-			Usage: "max latency for packet delivery and aggregation in(ms)",
+			Name:  "latency",
+			Value: 40,
+			Usage: "latency to reorganization packets in sender's sequence in(ms)",
 		},
 		cli.StringFlag{
 			Name:   "key",
@@ -189,7 +189,7 @@ func main() {
 		config.Listen = c.String("listen")
 		config.RemoteAddr = c.String("remoteaddr")
 		config.Client = c.Bool("client")
-		config.MaxLatency = c.Int("maxlatency")
+		config.Latency = c.Int("latency")
 		config.Tun = c.String("tun")
 		config.Key = c.String("key")
 		config.Crypt = c.String("crypt")
@@ -252,7 +252,7 @@ func main() {
 		log.Println("sndwnd:", config.SndWnd, "rcvwnd:", config.RcvWnd)
 		log.Println("tun:", config.Tun)
 		log.Println("KCP mtu:", config.MTU)
-		log.Println("latency:", config.MaxLatency)
+		log.Println("latency:", config.Latency)
 		log.Println("datashard:", config.DataShard, "parityshard:", config.ParityShard)
 		log.Println("sockbuf:", config.SockBuf)
 		log.Println("keepalive:", config.KeepAlive)
