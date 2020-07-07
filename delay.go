@@ -4,7 +4,7 @@ package main
 type reorgPacket struct {
 	packet []byte
 	seq    uint32 // the sender's packet sequence
-	ts     uint32 // the sender's packet transmit time to smooth jitter
+	ts     uint32 // the time to deliver to local tun
 }
 
 // a heap for delayed packet
