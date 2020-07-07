@@ -46,10 +46,6 @@ type Reorg struct {
 
 	die     chan struct{} // closing signal.
 	dieOnce sync.Once
-
-	// RTT estimator
-	rx_rttvar, rx_srtt int32
-	rx_mu              sync.Mutex
 }
 
 // currentMs returns current elasped monotonic milliseconds since program startup
@@ -270,8 +266,7 @@ func (reorg *Reorg) tunTX() {
 	flush := func() {
 		// try flush based on nextSeq
 		for packetHeap.Len() > 0 {
-			now := currentMs()
-			if _itimediff(now, packetHeap[0].ts) >= 0 || packetHeap[0].seq == nextSeq {
+			if packetHeap[0].seq == nextSeq || _itimediff(currentMs(), packetHeap[0].ts) >= 0 {
 				nextSeq = packetHeap[0].seq + 1 // expect seq+1
 				packet := heap.Pop(&packetHeap).(reorgPacket).packet
 				n, err := reorg.iface.Write(packet)
