@@ -281,6 +281,23 @@ func (reorg *Reorg) tunTX() {
 				timer.Reset(time.Duration(_itimediff(packetHeap[0].ts, now)) * time.Millisecond)
 				drained = false
 			}
+
+			// try flush based on nextSeq
+			for packetHeap.Len() > 0 {
+				now := currentMs()
+				if _itimediff(now, packetHeap[0].ts) >= 0 || packetHeap[0].seq == nextSeq {
+					nextSeq = packetHeap[0].seq + 1 // expect seq+1
+					packet := heap.Pop(&packetHeap).(reorgPacket).packet
+					n, err := reorg.iface.Write(packet)
+					defaultAllocator.Put(packet) // recycle after write
+					if err != nil {
+						log.Println("tunTX", "err", err, "n", n)
+					}
+				} else {
+					break
+				}
+			}
+
 		case <-timer.C:
 			drained = true
 			for packetHeap.Len() > 0 {
