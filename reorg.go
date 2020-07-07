@@ -262,60 +262,36 @@ func (reorg *Reorg) tunTX() {
 // runtime scheduler's delay, multi link latency
 func (reorg *Reorg) tunTX() {
 	var packetHeap delayedPacketHeap
-	timer := time.NewTimer(0)
-	drained := false
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
 
 	var nextSeq uint32
+
+	flush := func() {
+		// try flush based on nextSeq
+		for packetHeap.Len() > 0 {
+			now := currentMs()
+			if _itimediff(now, packetHeap[0].ts) >= 0 || packetHeap[0].seq == nextSeq {
+				nextSeq = packetHeap[0].seq + 1 // expect seq+1
+				packet := heap.Pop(&packetHeap).(reorgPacket).packet
+				n, err := reorg.iface.Write(packet)
+				defaultAllocator.Put(packet) // recycle after write
+				if err != nil {
+					log.Println("tunTX", "err", err, "n", n)
+				}
+			} else {
+				break
+			}
+		}
+	}
+
 	for {
 		select {
 		case dp := <-reorg.chTunTX:
-			now := currentMs()
 			heap.Push(&packetHeap, dp)
-			if dp.seq == packetHeap[0].seq {
-				// if the new packet insertion has changed the top element
-				stopped := timer.Stop()
-				if !stopped && !drained {
-					<-timer.C
-				}
-				// properly reset timer to trigger based on the new top element
-				timer.Reset(time.Duration(_itimediff(packetHeap[0].ts, now)) * time.Millisecond)
-				drained = false
-			}
-
-			// try flush based on nextSeq
-			for packetHeap.Len() > 0 {
-				now := currentMs()
-				if _itimediff(now, packetHeap[0].ts) >= 0 || packetHeap[0].seq == nextSeq {
-					nextSeq = packetHeap[0].seq + 1 // expect seq+1
-					packet := heap.Pop(&packetHeap).(reorgPacket).packet
-					n, err := reorg.iface.Write(packet)
-					defaultAllocator.Put(packet) // recycle after write
-					if err != nil {
-						log.Println("tunTX", "err", err, "n", n)
-					}
-				} else {
-					break
-				}
-			}
-
-		case <-timer.C:
-			drained = true
-			for packetHeap.Len() > 0 {
-				now := currentMs()
-				if _itimediff(now, packetHeap[0].ts) >= 0 || packetHeap[0].seq == nextSeq {
-					nextSeq = packetHeap[0].seq + 1 // expect seq+1
-					packet := heap.Pop(&packetHeap).(reorgPacket).packet
-					n, err := reorg.iface.Write(packet)
-					defaultAllocator.Put(packet) // recycle after write
-					if err != nil {
-						log.Println("tunTX", "err", err, "n", n)
-					}
-				} else {
-					timer.Reset(time.Duration(_itimediff(packetHeap[0].ts, now)) * time.Millisecond)
-					drained = false
-					break
-				}
-			}
+			flush()
+		case <-ticker.C:
+			flush()
 		case <-reorg.die:
 			return
 		}
