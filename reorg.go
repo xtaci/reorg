@@ -379,8 +379,8 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 			seq := binary.LittleEndian.Uint32(hdr[seqOffset:])
 			// calculate moving average of the RTO
 			rto := conn.GetRTO()
-			if rto > uint32(reorg.config.Latency) {
-				rto = uint32(reorg.config.Latency)
+			if rto > uint32(reorg.config.MaxLatency) {
+				rto = uint32(reorg.config.MaxLatency)
 			}
 
 			select {
