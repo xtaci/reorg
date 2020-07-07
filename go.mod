@@ -10,7 +10,7 @@ require (
 	github.com/tjfoc/gmsm v1.3.0 // indirect
 	github.com/urfave/cli v1.21.0
 	github.com/vishvananda/netlink v1.1.0
-	github.com/xtaci/kcp-go/v5 v5.5.14
+	github.com/xtaci/kcp-go/v5 v5.5.15-0.20200707084941-5d79d1b91b9d
 	github.com/xtaci/tcpraw v1.2.25
 	golang.org/x/crypto v0.0.0-20200320181102-891825fb96df
 	golang.org/x/net v0.0.0-20200320220750-118fecf932d8 // indirect
