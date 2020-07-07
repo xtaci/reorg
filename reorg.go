@@ -378,12 +378,6 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 				srtt = int32(reorg.config.MaxLatency)
 			}
 
-			n, err := reorg.iface.Write(payload)
-			defaultAllocator.Put(payload) // recycle after write
-			if err != nil {
-				log.Println("tunTX", "err", err, "n", n)
-			}
-
 			seq := binary.LittleEndian.Uint32(hdr[seqOffset:])
 			select {
 			case reorg.chTunTX <- reorgPacket{payload, seq, currentMs() + uint32(srtt)}:
