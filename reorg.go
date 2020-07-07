@@ -354,7 +354,6 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 // kcpRX is a goroutine to decapsualte incoming packets from kcp session to tun device.
 func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 	defer stopFunc()
-	var movingAVG []uint32
 	timeout := time.Duration(reorg.config.KeepAlive) * time.Second
 	hdr := make([]byte, hdrSize)
 	for {
@@ -376,23 +375,16 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 
 			// compensate the jitter according to the send time to make the latency smooth enough
 			// to avoid packet loss in variant TCP algorithm.
-			timestamp := binary.LittleEndian.Uint32(hdr[timestampOffset:])
+			//timestamp := binary.LittleEndian.Uint32(hdr[timestampOffset:])
 			seq := binary.LittleEndian.Uint32(hdr[seqOffset:])
 			// calculate moving average of the RTO
 			rto := conn.GetRTO()
-			movingAVG = append(movingAVG, rto)
-			if len(movingAVG) > 128 {
-				movingAVG = movingAVG[1:]
+			if rto > uint32(reorg.config.Latency) {
+				rto = uint32(reorg.config.Latency)
 			}
-
-			var total uint32
-			for k := range movingAVG {
-				total += movingAVG[k]
-			}
-			smoothed := total / uint32(len(movingAVG))
 
 			select {
-			case reorg.chTunTX <- reorgPacket{payload, seq, timestamp + smoothed}:
+			case reorg.chTunTX <- reorgPacket{payload, seq, rto}:
 			case <-reorg.die:
 				return
 			}
