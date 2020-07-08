@@ -279,6 +279,7 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 	defer stopFunc()
 
 	timeout := time.Duration(reorg.config.KeepAlive/2) * time.Second
+	autoExpireChan := time.After(time.Duration(reorg.config.AutoExpire) * time.Second)
 	keepaliveTimer := time.NewTimer(0)
 	defer keepaliveTimer.Stop()
 
@@ -311,6 +312,8 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 			}
 
 			keepaliveTimer.Reset(timeout)
+		case <-autoExpireChan:
+			return
 		case <-stopChan:
 			return
 		case <-reorg.die:

@@ -14,7 +14,6 @@ type Config struct {
 	TunIP        string `json:"tunip"`
 	Latency      int    `json:"Latency"`
 	AutoExpire   int    `json:"autoexpire"`
-	ScavengeTTL  int    `json:"scavengettl"`
 	Key          string `json:"key"`
 	Crypt        string `json:"crypt"`
 	Mode         string `json:"mode"`

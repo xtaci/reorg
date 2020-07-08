@@ -62,13 +62,8 @@ func main() {
 		},
 		cli.IntFlag{
 			Name:  "autoexpire",
-			Value: 0,
-			Usage: "set auto expiration time(in seconds) for a single UDP connection, 0 to disable",
-		},
-		cli.IntFlag{
-			Name:  "scavengettl",
 			Value: 600,
-			Usage: "set how long an expired connection can live(in sec), -1 to disable",
+			Usage: "set auto expiration time(in seconds) for a single UDP connection, 0 to disable",
 		},
 		cli.StringFlag{
 			Name:   "key",
@@ -201,7 +196,6 @@ func main() {
 		config.Client = c.Bool("client")
 		config.Latency = c.Int("latency")
 		config.AutoExpire = c.Int("autoexpire")
-		config.ScavengeTTL = c.Int("scavengettl")
 		config.Tun = c.String("tun")
 		config.Key = c.String("key")
 		config.Crypt = c.String("crypt")
@@ -270,7 +264,6 @@ func main() {
 		log.Println("keepalive:", config.KeepAlive)
 		log.Println("conn:", config.Conn)
 		log.Println("autoexpire:", config.AutoExpire)
-		log.Println("scavengettl:", config.ScavengeTTL)
 		log.Println("snmplog:", config.SnmpLog)
 		log.Println("snmpperiod:", config.SnmpPeriod)
 		log.Println("quiet:", config.Quiet)
