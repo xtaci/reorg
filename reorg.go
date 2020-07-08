@@ -351,14 +351,15 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 				return
 			}
 
+			now := currentMs()
 			seq := binary.LittleEndian.Uint32(hdr[seqOffset:])
 			ts := binary.LittleEndian.Uint32(hdr[tsOffset:])
-			diff := _itimediff(currentMs(), ts)
+			diff := _itimediff(now, ts)
 			if diff < 0 {
 				diff = 0
 			}
 			select {
-			case reorg.chTunTX <- reorgPacket{payload, seq, uint32(500 - diff)}:
+			case reorg.chTunTX <- reorgPacket{payload, seq, now + uint32(500-diff)}:
 			case <-reorg.die:
 				return
 			}
