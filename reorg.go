@@ -364,7 +364,6 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 			}
 			select {
 			case reorg.chTunTX <- reorgPacket{payload, seq, now + uint32(compensate)}:
-				log.Println("compensate:", compensate)
 			case <-reorg.die:
 				return
 			}
