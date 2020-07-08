@@ -154,7 +154,10 @@ func (reorg *Reorg) Serve() {
 		// client creates aggregator on tun
 		// the client connections will re-new itself periodically
 		for i := 0; i < reorg.config.Conn; i++ {
+			// we start client with some latency for each client
+			// to prevent from stop & re-connecting simultaneously.
 			go reorg.client()
+			<-time.After(time.Second)
 		}
 	} else {
 		// start server
