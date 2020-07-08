@@ -87,16 +87,6 @@ func main() {
 			Usage: "set num of UDP connections to server",
 		},
 		cli.IntFlag{
-			Name:  "autoexpire",
-			Value: 0,
-			Usage: "set auto expiration time(in seconds) for a single UDP connection, 0 to disable",
-		},
-		cli.IntFlag{
-			Name:  "scavengettl",
-			Value: 600,
-			Usage: "set how long an expired connection can live(in sec), -1 to disable",
-		},
-		cli.IntFlag{
 			Name:  "mtu",
 			Value: 1400,
 			Usage: "set maximum transmission unit for UDP packets",
