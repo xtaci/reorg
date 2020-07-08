@@ -358,8 +358,14 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 			if diff < 0 {
 				diff = 0
 			}
+
+			compensate := _itimediff(uint32(500), uint32(diff))
+			if compensate < 0 {
+				compensate = 0
+			}
 			select {
-			case reorg.chTunTX <- reorgPacket{payload, seq, now + uint32(500-diff)}:
+			case reorg.chTunTX <- reorgPacket{payload, seq, now + uint32(compensate)}:
+				log.Println("compensate:", compensate)
 			case <-reorg.die:
 				return
 			}
