@@ -353,6 +353,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 			if rttvar < 0 {
 				rttvar = -rttvar
 			}
+			log.Println("rttvar:", rttvar)
 			select {
 			case reorg.chTunTX <- reorgPacket{payload, seq, currentMs() + uint32(rttvar)}:
 			case <-reorg.die:
