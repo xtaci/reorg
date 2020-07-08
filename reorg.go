@@ -355,7 +355,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 			}
 			//log.Println("rttvar:", rttvar)
 			select {
-			case reorg.chTunTX <- reorgPacket{payload, seq, currentMs() + uint32(reorg.config.Latency) + uint32(rttvar)}:
+			case reorg.chTunTX <- reorgPacket{payload, seq, currentMs() + uint32(conn.GetSRTT())}:
 			case <-reorg.die:
 				return
 			}
