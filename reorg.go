@@ -277,9 +277,14 @@ func (reorg *Reorg) tunTX() {
 }
 
 // kcpTX is a goroutine to carry packets from tun device to kcp session.
-func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, rxStopChan <-chan struct{}) {
+func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, rxStopChan <-chan struct{}, isClient bool) {
 	timeout := time.Duration(reorg.config.KeepAlive/2) * time.Second
-	autoExpireChan := time.After(time.Duration(reorg.config.AutoExpire) * time.Second)
+
+	var autoExpireChan <-chan time.Time
+	if isClient { // only client side expires
+		autoExpireChan = time.After(time.Duration(reorg.config.AutoExpire) * time.Second)
+	}
+
 	keepaliveTimer := time.NewTimer(0)
 	defer keepaliveTimer.Stop()
 
@@ -314,9 +319,15 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, rxStopChan <-chan struct{}) {
 			}
 
 			keepaliveTimer.Reset(timeout)
-		case <-autoExpireChan: // if autoexpired triggered, stop transmitting now
+		case <-autoExpireChan:
+			// (client only)
+			// if autoexpired triggered, stop transmitting now
+			// we won't close the kcp session but keep kcpRX working for
+			// incoming packets. the remote will stop sending packets to this kcp session
+			// after KeepAlive
 			return
 		case <-rxStopChan:
+			// if remote has closed the session, rx
 			return
 		case <-reorg.die:
 			return
@@ -411,7 +422,7 @@ func (reorg *Reorg) client(id int) {
 		conn := reorg.waitConn(reorg.config, reorg.block)
 		// the control struct
 		rxStopChan := make(chan struct{})
-		go reorg.kcpTX(conn, rxStopChan)
+		go reorg.kcpTX(conn, rxStopChan, true)
 		go reorg.kcpRX(conn, rxStopChan)
 
 		// wait for receiving stops
@@ -463,7 +474,7 @@ func (reorg *Reorg) server() {
 
 		// the control struct
 		rxStopChan := make(chan struct{})
-		go reorg.kcpTX(conn, rxStopChan)
+		go reorg.kcpTX(conn, rxStopChan, false)
 		go reorg.kcpRX(conn, rxStopChan)
 		go func() {
 			<-rxStopChan

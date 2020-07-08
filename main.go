@@ -63,7 +63,7 @@ func main() {
 		cli.IntFlag{
 			Name:  "autoexpire",
 			Value: 600,
-			Usage: "set auto expiration time(in seconds) for a single UDP connection, 0 to disable",
+			Usage: "(client only) set auto expiration time(in seconds) for a single UDP connection, 0 to disable",
 		},
 		cli.StringFlag{
 			Name:   "key",
