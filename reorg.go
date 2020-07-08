@@ -156,7 +156,8 @@ func (reorg *Reorg) Serve() {
 		for i := 0; i < reorg.config.Conn; i++ {
 			// we start client with some latency for each client
 			// to prevent from stop & re-connecting simultaneously.
-			go reorg.client()
+			log.Println("starting client #", i)
+			go reorg.client(i)
 			<-time.After(time.Second)
 		}
 	} else {
@@ -394,7 +395,7 @@ func (reorg *Reorg) waitConn(config *Config, block kcp.BlockCrypt) *kcp.UDPSessi
 }
 
 // start as client, client will respwan itself if stopped
-func (reorg *Reorg) client() {
+func (reorg *Reorg) client(id int) {
 	for {
 		// establish UDP connection
 		conn := reorg.waitConn(reorg.config, reorg.block)
@@ -410,6 +411,7 @@ func (reorg *Reorg) client() {
 		go reorg.kcpTX(conn, stopFunc, stopChan)
 		go reorg.kcpRX(conn, stopFunc)
 
+		log.Println("restarting client #", id)
 		// wait for connection termination
 		<-stopChan
 	}
