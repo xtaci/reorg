@@ -411,9 +411,9 @@ func (reorg *Reorg) client(id int) {
 		go reorg.kcpTX(conn, stopFunc, stopChan)
 		go reorg.kcpRX(conn, stopFunc)
 
-		log.Println("restarting client #", id)
 		// wait for connection termination
 		<-stopChan
+		log.Println("restarting client #", id)
 	}
 }
 
