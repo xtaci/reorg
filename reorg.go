@@ -245,14 +245,13 @@ func (reorg *Reorg) tunTX() {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 
-	var nextSeq uint32
+	//var nextSeq uint32
 
 	flush := func() {
 		// try flush packets in order
 		for packetHeap.Len() > 0 {
-			if packetHeap[0].seq == nextSeq || _itimediff(currentMs(), packetHeap[0].ts) >= 0 {
+			if _itimediff(currentMs(), packetHeap[0].ts) >= 0 {
 				// and if expired, force delivery
-				nextSeq = packetHeap[0].seq + 1 // expect seq+1
 				packet := heap.Pop(&packetHeap).(reorgPacket).packet
 				n, err := reorg.iface.Write(packet)
 				defaultAllocator.Put(packet) // recycle after write
