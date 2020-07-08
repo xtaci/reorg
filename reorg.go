@@ -358,7 +358,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 				diff = 0
 			}
 
-			compensate := _itimediff(uint32(500), uint32(diff))
+			compensate := _itimediff(uint32(reorg.config.Latency), uint32(diff))
 			if compensate < 0 {
 				compensate = 0
 			}

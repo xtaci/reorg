@@ -57,7 +57,7 @@ func main() {
 		},
 		cli.IntFlag{
 			Name:  "latency",
-			Value: 40,
+			Value: 300,
 			Usage: "latency to reorganization packets in sender's sequence in(ms)",
 		},
 		cli.IntFlag{
