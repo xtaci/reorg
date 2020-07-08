@@ -245,8 +245,6 @@ func (reorg *Reorg) tunTX() {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 
-	//var nextSeq uint32
-
 	flush := func() {
 		// try flush packets in order
 		for packetHeap.Len() > 0 {
@@ -279,9 +277,7 @@ func (reorg *Reorg) tunTX() {
 }
 
 // kcpTX is a goroutine to carry packets from tun device to kcp session.
-func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan struct{}) {
-	defer stopFunc()
-
+func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, rxStopChan <-chan struct{}) {
 	timeout := time.Duration(reorg.config.KeepAlive/2) * time.Second
 	autoExpireChan := time.After(time.Duration(reorg.config.AutoExpire) * time.Second)
 	keepaliveTimer := time.NewTimer(0)
@@ -318,9 +314,9 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 			}
 
 			keepaliveTimer.Reset(timeout)
-		case <-autoExpireChan:
+		case <-autoExpireChan: // if autoexpired triggered, stop transmitting now
 			return
-		case <-stopChan:
+		case <-rxStopChan:
 			return
 		case <-reorg.die:
 			return
@@ -329,8 +325,9 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 }
 
 // kcpRX is a goroutine to decapsualte incoming packets from kcp session to tun device.
-func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
-	defer stopFunc()
+func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
+	defer close(rxStopChan)
+
 	timeout := time.Duration(reorg.config.KeepAlive) * time.Second
 	hdr := make([]byte, hdrSize)
 	for {
@@ -413,19 +410,13 @@ func (reorg *Reorg) client(id int) {
 		// establish UDP connection
 		conn := reorg.waitConn(reorg.config, reorg.block)
 		// the control struct
-		var stopOnce sync.Once
-		stopChan := make(chan struct{})
-		stopFunc := func() {
-			stopOnce.Do(func() {
-				conn.Close()
-				close(stopChan)
-			})
-		}
-		go reorg.kcpTX(conn, stopFunc, stopChan)
-		go reorg.kcpRX(conn, stopFunc)
+		rxStopChan := make(chan struct{})
+		go reorg.kcpTX(conn, rxStopChan)
+		go reorg.kcpRX(conn, rxStopChan)
 
-		// wait for connection termination
-		<-stopChan
+		// wait for receiving stops
+		<-rxStopChan
+		conn.Close()
 		log.Println("restarting client #", id)
 	}
 }
@@ -471,16 +462,12 @@ func (reorg *Reorg) server() {
 		conn.SetWindowSize(config.SndWnd, config.RcvWnd)
 
 		// the control struct
-		var stopOnce sync.Once
-		stopChan := make(chan struct{})
-		stopFunc := func() {
-			stopOnce.Do(func() {
-				conn.Close()
-				close(stopChan)
-			})
-		}
-
-		go reorg.kcpTX(conn, stopFunc, stopChan)
-		go reorg.kcpRX(conn, stopFunc)
+		rxStopChan := make(chan struct{})
+		go reorg.kcpTX(conn, rxStopChan)
+		go reorg.kcpRX(conn, rxStopChan)
+		go func() {
+			<-rxStopChan
+			conn.Close()
+		}()
 	}
 }
