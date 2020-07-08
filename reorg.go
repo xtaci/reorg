@@ -27,8 +27,9 @@ const (
 )
 
 const (
-	hdrSize   = 6 // extra header size for each packet
+	hdrSize   = 10 // extra header size for each packet
 	seqOffset = 2
+	tsOffset  = 6
 )
 
 // Reorg defines a packet organizer to add extra latency in exchange for smoothness and throughput
@@ -296,6 +297,8 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, stopFunc func(), stopChan <-chan
 			binary.LittleEndian.PutUint16(hdr, uint16(len(rpacket.packet)))
 			// 4-bytes seqid
 			binary.LittleEndian.PutUint32(hdr[seqOffset:], rpacket.seq)
+			// 4-bytes timestamp
+			binary.LittleEndian.PutUint32(hdr[tsOffset:], rpacket.ts)
 
 			// write data
 			conn.SetWriteDeadline(time.Now().Add(timeout))
@@ -349,13 +352,13 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 			}
 
 			seq := binary.LittleEndian.Uint32(hdr[seqOffset:])
-			rttvar := conn.GetSRTTVar()
-			if rttvar < 0 {
-				rttvar = -rttvar
+			ts := binary.LittleEndian.Uint32(hdr[tsOffset:])
+			diff := _itimediff(currentMs(), ts)
+			if diff < 0 {
+				diff = 0
 			}
-			//log.Println("rttvar:", rttvar)
 			select {
-			case reorg.chTunTX <- reorgPacket{payload, seq, currentMs() + uint32(conn.GetSRTT())}:
+			case reorg.chTunTX <- reorgPacket{payload, seq, uint32(500 - diff)}:
 			case <-reorg.die:
 				return
 			}
