@@ -349,8 +349,12 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, stopFunc func()) {
 			}
 
 			seq := binary.LittleEndian.Uint32(hdr[seqOffset:])
+			rttvar := conn.GetSRTTVar()
+			if rttvar < 0 {
+				rttvar = -rttvar
+			}
 			select {
-			case reorg.chTunTX <- reorgPacket{payload, seq, currentMs() + uint32(reorg.config.Latency)}:
+			case reorg.chTunTX <- reorgPacket{payload, seq, currentMs() + uint32(rttvar)}:
 			case <-reorg.die:
 				return
 			}
