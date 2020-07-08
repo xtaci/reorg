@@ -18,12 +18,12 @@ import (
 )
 
 const (
-	DefaultPacketQueue = 1024 // packet IO queue of device
+	defaultPacketQueue = 1024 // packet IO queue of device
 )
 
 const (
-	DefaultClientTunIP = "10.1.0.2/24"
-	DefaultServerTunIP = "10.1.0.1/24"
+	defaultServerTunIP = "10.1.0.1/24"
+	defaultClientTunIP = "10.1.0.2/24"
 )
 
 const (
@@ -106,9 +106,9 @@ func NewReorg(config *Config) *Reorg {
 	var addr *netlink.Addr
 	if config.TunIP == "" {
 		if config.Client { // default address to 10.1.0.2 as client, and 10.1.0.1 as server
-			addr, _ = netlink.ParseAddr(DefaultClientTunIP)
+			addr, _ = netlink.ParseAddr(defaultClientTunIP)
 		} else {
-			addr, _ = netlink.ParseAddr(DefaultServerTunIP)
+			addr, _ = netlink.ParseAddr(defaultServerTunIP)
 		}
 		netlink.AddrAdd(tundevice, addr)
 	} else {
@@ -133,9 +133,9 @@ func NewReorg(config *Config) *Reorg {
 	reorg := new(Reorg)
 	reorg.config = config
 	reorg.block = block
-	reorg.chBalancer = make(chan reorgPacket, DefaultPacketQueue)
-	reorg.chKcpTX = make(chan reorgPacket, DefaultPacketQueue)
-	reorg.chTunTX = make(chan reorgPacket, DefaultPacketQueue)
+	reorg.chBalancer = make(chan reorgPacket, defaultPacketQueue)
+	reorg.chKcpTX = make(chan reorgPacket, defaultPacketQueue)
+	reorg.chTunTX = make(chan reorgPacket, defaultPacketQueue)
 	reorg.die = make(chan struct{})
 	reorg.iface = iface
 	reorg.linkmtu = linkmtu
@@ -192,6 +192,7 @@ func (reorg *Reorg) tunRX() {
 
 		select {
 		case reorg.chBalancer <- reorgPacket{packet, seq, currentMs()}:
+			// seq is monotonic for a tun-device
 			seq++
 		case <-reorg.die:
 			return
@@ -208,7 +209,7 @@ func (reorg *Reorg) balancer() {
 	for {
 		select {
 		case p := <-reorg.chBalancer:
-			// accept all packets from tun to prevent from packet lost while tun txqueue becomes full
+			// staging all packets from tun to prevent packet lost while tun txqueue becomes full
 			reorgPackets = append(reorgPackets, p)
 			chKcpTX = reorg.chKcpTX
 			nextPacket = reorgPackets[0]
@@ -226,36 +227,14 @@ func (reorg *Reorg) balancer() {
 	}
 }
 
-/*
-// a test deliver with high jitter
-func (reorg *Reorg) tunTX() {
-       var packetHeap delayedPacketHeap
-       timer := time.NewTimer(0)
-
-       for {
-               select {
-               case dp := <-reorg.chTunTX:
-                       heap.Push(&packetHeap, dp)
-               case <-timer.C:
-                       for packetHeap.Len() > 0 {
-                               packet := heap.Pop(&packetHeap).(reorgPacket).packet
-                               n, err := reorg.iface.Write(packet)
-                               defaultAllocator.Put(packet) // put back after write
-                               if err != nil {
-                                       log.Println("tunTX", "err", err, "n", n)
-                               }
-                       }
-                       timer.Reset(time.Duration(reorg.config.Latency/2) * time.Millisecond)
-               case <-reorg.die:
-                       return
-               }
-       }
-}
-*/
-
 // tunTX is a goroutine to delay the sending of incoming packet to a fixed interval,
 // this works as a low-pass filter for latency deviation to mitigate types of noise, such as:
-// runtime scheduler's delay, multi link latency
+// runtime scheduler's channel send/recv delay, multi link latency.
+// the algorithm follows the rules below:
+//
+// 1. try best to delivery the packet(from multiple links) in order
+// 2. if packets arrived out of order, wait at most interval(like 40ms) before delivery.
+//
 func (reorg *Reorg) tunTX() {
 	var packetHeap delayedPacketHeap
 	ticker := time.NewTicker(10 * time.Millisecond)
@@ -264,9 +243,10 @@ func (reorg *Reorg) tunTX() {
 	var nextSeq uint32
 
 	flush := func() {
-		// try flush based on nextSeq
+		// try flush packets in order
 		for packetHeap.Len() > 0 {
 			if packetHeap[0].seq == nextSeq || _itimediff(currentMs(), packetHeap[0].ts) >= 0 {
+				// and if expired, force delivery
 				nextSeq = packetHeap[0].seq + 1 // expect seq+1
 				packet := heap.Pop(&packetHeap).(reorgPacket).packet
 				n, err := reorg.iface.Write(packet)
@@ -280,6 +260,7 @@ func (reorg *Reorg) tunTX() {
 		}
 	}
 
+	// the core reorganizing loop will check timeout periodically
 	for {
 		select {
 		case dp := <-reorg.chTunTX:

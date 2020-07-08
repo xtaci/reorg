@@ -13,6 +13,8 @@ type Config struct {
 	Tun          string `json:"tun"`
 	TunIP        string `json:"tunip"`
 	Latency      int    `json:"Latency"`
+	AutoExpire   int    `json:"autoexpire"`
+	ScavengeTTL  int    `json:"scavengettl"`
 	Key          string `json:"key"`
 	Crypt        string `json:"crypt"`
 	Mode         string `json:"mode"`
