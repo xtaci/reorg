@@ -18,6 +18,11 @@ import (
 )
 
 const (
+	latencyUpdatePeriod     = 60000 // 60s
+	minLatencyUpdatePackets = 128
+)
+
+const (
 	defaultPacketQueue = 1024 // packet IO queue of device
 )
 
@@ -326,8 +331,7 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, rxStopChan <-chan struct{}, isCl
 			// incoming packets. the remote will stop sending packets to this kcp session
 			// after KeepAlive
 			return
-		case <-rxStopChan:
-			// if remote has closed the session, rx
+		case <-rxStopChan: // kcpRX closed
 			return
 		case <-reorg.die:
 			return
@@ -341,6 +345,12 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 
 	timeout := time.Duration(reorg.config.KeepAlive) * time.Second
 	hdr := make([]byte, hdrSize)
+
+	// adaptive latency update
+	latency := uint32(reorg.config.Latency) // initial latency
+	lastLatencyUpdate := currentMs()
+
+	var packetsCount uint64
 	for {
 		conn.SetReadDeadline(time.Now().Add(timeout))
 		n, err := io.ReadFull(conn, hdr)
@@ -366,7 +376,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 				diff = 0
 			}
 
-			compensate := _itimediff(uint32(reorg.config.Latency), uint32(diff))
+			compensate := _itimediff(uint32(latency), uint32(diff))
 			if compensate < 0 {
 				compensate = 0
 			}
@@ -374,6 +384,20 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 			case reorg.chTunTX <- reorgPacket{payload, seq, now + uint32(compensate)}:
 			case <-reorg.die:
 				return
+			}
+
+			// adaptive latency updater
+			// we have to take the packets count into consideration for latency accurency
+			if _itimediff(now, lastLatencyUpdate) > latencyUpdatePeriod {
+				if packetsCount > minLatencyUpdatePackets { // got sufficient samples during this period, we can update the latency
+					latency = conn.GetRTO()
+					log.Printf("Got %v RTT samples, latency updated to:%v", packetsCount, latency)
+				} else {
+					log.Printf("RTT samples are not sufficient: %v samples, postponed the latency updating", packetsCount)
+				}
+
+				packetsCount = 0 // reset packet counter
+				lastLatencyUpdate = now
 			}
 		}
 	}
