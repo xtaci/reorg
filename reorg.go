@@ -359,6 +359,22 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 			return
 		}
 
+		now := currentMs()
+		// adaptive latency updater
+		// we have to take the packets count into consideration for latency accurency
+		if _itimediff(now, lastLatencyUpdate) > latencyUpdatePeriod {
+			if packetsCount > minLatencyUpdatePackets { // got sufficient samples during this period, we can update the latency
+				latency = conn.GetRTO()
+				log.Printf("Got %v RTT samples, latency updated to:%v", packetsCount, latency)
+			} else {
+				log.Printf("RTT samples are not sufficient: %v samples, postponed the latency updating", packetsCount)
+			}
+
+			packetsCount = 0 // reset packet counter
+			lastLatencyUpdate = now
+		}
+
+		// packets handler
 		size := binary.LittleEndian.Uint16(hdr)
 		if size > 0 { // payload
 			payload := defaultAllocator.Get(int(size))
@@ -368,7 +384,6 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 				return
 			}
 
-			now := currentMs()
 			seq := binary.LittleEndian.Uint32(hdr[seqOffset:])
 			ts := binary.LittleEndian.Uint32(hdr[tsOffset:])
 			diff := _itimediff(now, ts)
@@ -384,20 +399,6 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 			case reorg.chTunTX <- reorgPacket{payload, seq, now + uint32(compensate)}:
 			case <-reorg.die:
 				return
-			}
-
-			// adaptive latency updater
-			// we have to take the packets count into consideration for latency accurency
-			if _itimediff(now, lastLatencyUpdate) > latencyUpdatePeriod {
-				if packetsCount > minLatencyUpdatePackets { // got sufficient samples during this period, we can update the latency
-					latency = conn.GetRTO()
-					log.Printf("Got %v RTT samples, latency updated to:%v", packetsCount, latency)
-				} else {
-					log.Printf("RTT samples are not sufficient: %v samples, postponed the latency updating", packetsCount)
-				}
-
-				packetsCount = 0 // reset packet counter
-				lastLatencyUpdate = now
 			}
 		}
 	}
