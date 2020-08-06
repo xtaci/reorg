@@ -359,11 +359,12 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 			return
 		}
 
-		now := currentMs()
 		// adaptive latency updater
 		// we have to take the packets count into consideration for latency accurency
+		now := currentMs()
+		packetsCount++
 		if _itimediff(now, lastLatencyUpdate) > latencyUpdatePeriod {
-			if packetsCount > minLatencyUpdatePackets { // got sufficient samples during this period, we can update the latency
+			if packetsCount >= minLatencyUpdatePackets { // got sufficient samples during this period, we can update the latency
 				latency = conn.GetRTO()
 				log.Printf("Got %v RTT samples, latency updated to:%v", packetsCount, latency)
 			} else {
