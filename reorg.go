@@ -407,7 +407,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 
 // create conn initialize a new kcp session
 func (reorg *Reorg) createConn(remote string, config *Config, block kcp.BlockCrypt) (*kcp.UDPSession, error) {
-	kcpconn, err := dial(remote, config, block)
+	kcpconn, err := dial(config.TCP, remote, config.DataShard, config.ParityShard, block)
 	if err != nil {
 		return nil, errors.Wrap(err, "dial()")
 	}
