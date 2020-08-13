@@ -156,6 +156,7 @@ func NewReorg(config *Config) *Reorg {
 
 // Serve starts serving tunnel service
 func (reorg *Reorg) Serve() {
+	go reorg.sampler()
 	// spin-up tun-device reader/writer
 	go reorg.balancer()
 	go reorg.tunRX()
@@ -192,11 +193,11 @@ func (reorg *Reorg) Close() {
 }
 
 // sampler is a goroutine to estimate the best RTO for multiple links
-func (reorg *Reorg) sampler(config *Config) {
+func (reorg *Reorg) sampler() {
 	// a sliding samples window
 	samples := make([]uint32, defaultRTOSamples)
 	for k := range samples {
-		samples[k] = uint32(config.Latency)
+		samples[k] = uint32(reorg.config.Latency)
 	}
 	var seq uint32
 
