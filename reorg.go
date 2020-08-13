@@ -21,6 +21,7 @@ import (
 const (
 	latencyUpdatePeriod = 60000 // 60s
 	defaultRTOSamples   = 128
+	minRTOReporting     = 128
 	maxRTO              = 1000 // 1s
 )
 
@@ -396,6 +397,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 	timeout := time.Duration(reorg.config.KeepAlive) * time.Second
 	hdr := make([]byte, hdrSize)
 
+	var packetsCount uint64
 	for {
 		conn.SetReadDeadline(time.Now().Add(timeout))
 		n, err := io.ReadFull(conn, hdr)
@@ -404,11 +406,13 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 			return
 		}
 
-		// adaptive latency updater
-		// we have to take the packets count into consideration for latency accurency
-		now := currentMs()
+		packetsCount++
 		latency := atomic.LoadUint32(&reorg.currentRTO)
-		reorg.reportRTO(2 * uint32(conn.GetSRTT()))
+
+		// we omit the beginning packets for RTT to converge
+		if packetsCount >= minRTOReporting {
+			reorg.reportRTO(2 * uint32(conn.GetSRTT()))
+		}
 
 		// packets handler
 		size := binary.LittleEndian.Uint16(hdr)
@@ -420,6 +424,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 				return
 			}
 
+			now := currentMs()
 			seq := binary.LittleEndian.Uint32(hdr[seqOffset:])
 			ts := binary.LittleEndian.Uint32(hdr[tsOffset:])
 			diff := _itimediff(now, ts)
