@@ -21,6 +21,7 @@ import (
 const (
 	latencyUpdatePeriod = 60000 // 60s
 	defaultRTOSamples   = 128
+	maxRTO              = 1000 // 1s
 )
 
 const (
@@ -216,7 +217,9 @@ func (reorg *Reorg) sampler() {
 					max = samples[i]
 				}
 			}
-
+			if max > maxRTO {
+				max = maxRTO
+			}
 			atomic.StoreUint32(&reorg.currentRTO, max)
 			log.Println("setting current RTO to:", max)
 		case <-reorg.die:
