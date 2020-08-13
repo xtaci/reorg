@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
@@ -18,8 +19,8 @@ import (
 )
 
 const (
-	latencyUpdatePeriod     = 60000 // 60s
-	minLatencyUpdatePackets = 128
+	latencyUpdatePeriod = 60000 // 60s
+	defaultRTOSamples   = 128
 )
 
 const (
@@ -49,6 +50,9 @@ type Reorg struct {
 	chBalancer chan reorgPacket // packets received from tun device will be delivered to balancer
 	chKcpTX    chan reorgPacket // packets received from balancer will be delivered to this chan.
 	chTunTX    chan reorgPacket // packets from kcp session will be sent here awaiting to deliver to device
+
+	chSamplesRTO chan uint32 //  all nearest latency samples from different links
+	currentRTO   uint32
 
 	die     chan struct{} // closing signal.
 	dieOnce sync.Once
@@ -145,7 +149,8 @@ func NewReorg(config *Config) *Reorg {
 	reorg.die = make(chan struct{})
 	reorg.iface = iface
 	reorg.linkmtu = linkmtu
-
+	reorg.chSamplesRTO = make(chan uint32, defaultRTOSamples)
+	reorg.currentRTO = uint32(config.Latency)
 	return reorg
 }
 
@@ -184,6 +189,46 @@ func (reorg *Reorg) Close() {
 		close(reorg.die)
 		reorg.iface.Close()
 	})
+}
+
+// sampler is a goroutine to estimate the best RTO for multiple links
+func (reorg *Reorg) sampler(config *Config) {
+	// a sliding samples window
+	samples := make([]uint32, defaultRTOSamples)
+	for k := range samples {
+		samples[k] = uint32(config.Latency)
+	}
+	var seq uint32
+
+	ticker := time.NewTicker(latencyUpdatePeriod * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case rto := <-reorg.chSamplesRTO:
+			idx := seq % defaultRTOSamples
+			samples[idx] = rto
+			seq++
+		case <-ticker.C:
+			max := samples[0]
+			for i := 1; i < len(samples); i++ {
+				if samples[i] > max {
+					max = samples[i]
+				}
+			}
+
+			atomic.StoreUint32(&reorg.currentRTO, max)
+		case <-reorg.die:
+			return
+		}
+	}
+}
+
+func (reorg *Reorg) reportRTO(rto uint32) {
+	select {
+	case reorg.chSamplesRTO <- rto:
+	case <-reorg.die:
+		return
+	}
 }
 
 // tunRX is a goroutine for tun-device to receive incoming packets
@@ -346,11 +391,6 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 	timeout := time.Duration(reorg.config.KeepAlive) * time.Second
 	hdr := make([]byte, hdrSize)
 
-	// adaptive latency update
-	latency := uint32(reorg.config.Latency) // initial latency
-	lastLatencyUpdate := currentMs()
-
-	var packetsCount uint64
 	for {
 		conn.SetReadDeadline(time.Now().Add(timeout))
 		n, err := io.ReadFull(conn, hdr)
@@ -362,18 +402,8 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 		// adaptive latency updater
 		// we have to take the packets count into consideration for latency accurency
 		now := currentMs()
-		packetsCount++
-		if _itimediff(now, lastLatencyUpdate) > latencyUpdatePeriod {
-			if packetsCount >= minLatencyUpdatePackets { // got sufficient samples during this period, we can update the latency
-				latency = conn.GetRTO()
-				log.Printf("Got %v RTT samples, latency updated to:%v", packetsCount, latency)
-			} else {
-				log.Printf("RTT samples are not sufficient: %v samples, postponed the latency updating", packetsCount)
-			}
-
-			packetsCount = 0 // reset packet counter
-			lastLatencyUpdate = now
-		}
+		latency := atomic.LoadUint32(&reorg.currentRTO)
+		reorg.reportRTO(conn.GetRTO())
 
 		// packets handler
 		size := binary.LittleEndian.Uint16(hdr)
