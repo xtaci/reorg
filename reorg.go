@@ -53,8 +53,8 @@ type Reorg struct {
 	chKcpTX    chan reorgPacket // packets received from balancer will be delivered to this chan.
 	chTunTX    chan reorgPacket // packets from kcp session will be sent here awaiting to deliver to device
 
-	chSamplesRTO chan uint32 //  all nearest latency samples from different links
-	currentRTO   uint32
+	chSamplesRTO   chan uint32 //  all nearest latency samples from different links
+	currentLatency uint32
 
 	die     chan struct{} // closing signal.
 	dieOnce sync.Once
@@ -152,7 +152,7 @@ func NewReorg(config *Config) *Reorg {
 	reorg.iface = iface
 	reorg.linkmtu = linkmtu
 	reorg.chSamplesRTO = make(chan uint32, defaultRTOSamples)
-	reorg.currentRTO = uint32(config.Latency)
+	reorg.currentLatency = uint32(config.Latency)
 	return reorg
 }
 
@@ -221,8 +221,8 @@ func (reorg *Reorg) sampler() {
 			if max > maxRTO {
 				max = maxRTO
 			}
-			atomic.StoreUint32(&reorg.currentRTO, max)
-			log.Println("setting current RTO to:", max)
+			atomic.StoreUint32(&reorg.currentLatency, max)
+			log.Println("setting current latency to:", max)
 		case <-reorg.die:
 			return
 		}
@@ -407,7 +407,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 		}
 
 		packetsCount++
-		latency := atomic.LoadUint32(&reorg.currentRTO)
+		latency := atomic.LoadUint32(&reorg.currentLatency)
 
 		// we omit the beginning packets for RTT to converge
 		if packetsCount >= minRTOReporting {
