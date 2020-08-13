@@ -26,29 +26,23 @@ func checkError(err error) {
 
 func main() {
 	rand.Seed(int64(time.Now().Nanosecond()))
-	if VERSION == "SELFBUILD" {
-		// add more log flags for debugging
-		log.SetFlags(log.LstdFlags | log.Lshortfile)
-	}
-
 	myApp := cli.NewApp()
-	myApp.Name = "kcptun"
-	myApp.Usage = "client(with SMUX)"
+	myApp.Name = "Reorg"
+	myApp.Usage = "Packet reorganizer"
 	myApp.Version = VERSION
 	myApp.Flags = []cli.Flag{
 		cli.BoolFlag{
 			Name:  "client",
-			Usage: "",
+			Usage: "run as client, otherwise run as server",
 		},
-		cli.StringFlag{
+		cli.StringSliceFlag{
 			Name:  "remoteaddr, r",
-			Value: "vps:29900",
-			Usage: "kcp server address",
+			Usage: "reorg server address, you can specifiy this parameter many times",
 		},
 		cli.StringFlag{
 			Name:  "listen,l",
 			Value: ":29900",
-			Usage: "kcp server listen address",
+			Usage: "reorg server listen address",
 		},
 		cli.StringFlag{
 			Name:  "tun",
@@ -66,10 +60,9 @@ func main() {
 			Usage: "(client only) set auto expiration time(in seconds) for a single UDP connection, 0 to disable",
 		},
 		cli.StringFlag{
-			Name:   "key",
-			Value:  "it's a secrect",
-			Usage:  "pre-shared secret between client and server",
-			EnvVar: "KCPTUN_KEY",
+			Name:  "key",
+			Value: "reorger",
+			Usage: "pre-shared secret between client and server",
 		},
 		cli.StringFlag{
 			Name:  "crypt",
@@ -80,11 +73,6 @@ func main() {
 			Name:  "mode",
 			Value: "fast",
 			Usage: "profiles: fast3, fast2, fast, normal, manual",
-		},
-		cli.IntFlag{
-			Name:  "conn",
-			Value: 1,
-			Usage: "set num of UDP connections to server",
 		},
 		cli.IntFlag{
 			Name:  "mtu",
@@ -182,7 +170,7 @@ func main() {
 	myApp.Action = func(c *cli.Context) error {
 		config := Config{}
 		config.Listen = c.String("listen")
-		config.RemoteAddr = c.String("remoteaddr")
+		config.RemoteAddr = c.StringSlice("remoteaddr")
 		config.Client = c.Bool("client")
 		config.Latency = c.Int("latency")
 		config.AutoExpire = c.Int("autoexpire")
@@ -190,7 +178,6 @@ func main() {
 		config.Key = c.String("key")
 		config.Crypt = c.String("crypt")
 		config.Mode = c.String("mode")
-		config.Conn = c.Int("conn")
 		config.MTU = c.Int("mtu")
 		config.SndWnd = c.Int("sndwnd")
 		config.RcvWnd = c.Int("rcvwnd")
@@ -232,8 +219,13 @@ func main() {
 		}
 
 		if config.Client {
-			log.Println("client")
-			log.Println("remote address:", config.RemoteAddr)
+			log.Printf("run as client with %v server", len(config.RemoteAddr))
+			if len(config.RemoteAddr) == 0 {
+				log.Fatal("0 server address specified")
+			}
+			for k := range config.RemoteAddr {
+				log.Println("server:", config.RemoteAddr[k])
+			}
 		} else {
 			log.Println("server")
 			log.Println("listening on:", config.Listen)
@@ -252,7 +244,6 @@ func main() {
 		log.Println("datashard:", config.DataShard, "parityshard:", config.ParityShard)
 		log.Println("sockbuf:", config.SockBuf)
 		log.Println("keepalive:", config.KeepAlive)
-		log.Println("conn:", config.Conn)
 		log.Println("autoexpire:", config.AutoExpire)
 		log.Println("snmplog:", config.SnmpLog)
 		log.Println("snmpperiod:", config.SnmpPeriod)

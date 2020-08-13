@@ -159,11 +159,11 @@ func (reorg *Reorg) Serve() {
 	if reorg.config.Client {
 		// client creates aggregator on tun
 		// the client connections will re-new itself periodically
-		for i := 0; i < reorg.config.Conn; i++ {
+		for _, remote := range reorg.config.RemoteAddr {
 			// we start client with some latency for each client
 			// to prevent from stop & re-connecting simultaneously.
-			log.Println("starting client #", i)
-			go reorg.client(i)
+			log.Println("connecting client to remote: #", remote)
+			go reorg.client(remote)
 			<-time.After(time.Second)
 		}
 	} else {
@@ -406,8 +406,8 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 }
 
 // create conn initialize a new kcp session
-func (reorg *Reorg) createConn(config *Config, block kcp.BlockCrypt) (*kcp.UDPSession, error) {
-	kcpconn, err := dial(config, block)
+func (reorg *Reorg) createConn(remote string, config *Config, block kcp.BlockCrypt) (*kcp.UDPSession, error) {
+	kcpconn, err := dial(remote, config, block)
 	if err != nil {
 		return nil, errors.Wrap(err, "dial()")
 	}
@@ -430,9 +430,9 @@ func (reorg *Reorg) createConn(config *Config, block kcp.BlockCrypt) (*kcp.UDPSe
 }
 
 // wait until a connection is ready
-func (reorg *Reorg) waitConn(config *Config, block kcp.BlockCrypt) *kcp.UDPSession {
+func (reorg *Reorg) waitConn(remote string, config *Config, block kcp.BlockCrypt) *kcp.UDPSession {
 	for {
-		if session, err := reorg.createConn(config, block); err == nil {
+		if session, err := reorg.createConn(remote, config, block); err == nil {
 			return session
 		} else {
 			log.Println("re-connecting:", err)
@@ -442,10 +442,10 @@ func (reorg *Reorg) waitConn(config *Config, block kcp.BlockCrypt) *kcp.UDPSessi
 }
 
 // start as client, client will respwan itself if stopped
-func (reorg *Reorg) client(id int) {
+func (reorg *Reorg) client(remote string) {
 	for {
 		// establish UDP connection
-		conn := reorg.waitConn(reorg.config, reorg.block)
+		conn := reorg.waitConn(remote, reorg.config, reorg.block)
 		// the control struct
 		rxStopChan := make(chan struct{})
 		go reorg.kcpTX(conn, rxStopChan, true)
@@ -454,7 +454,7 @@ func (reorg *Reorg) client(id int) {
 		// wait for receiving stops
 		<-rxStopChan
 		conn.Close()
-		log.Println("restarting client #", id)
+		log.Println("restarting client to remote #:", remote)
 	}
 }
 
