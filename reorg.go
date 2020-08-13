@@ -217,6 +217,7 @@ func (reorg *Reorg) sampler(config *Config) {
 			}
 
 			atomic.StoreUint32(&reorg.currentRTO, max)
+			log.Println("setting current RTO to:", max)
 		case <-reorg.die:
 			return
 		}
