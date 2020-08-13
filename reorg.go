@@ -22,7 +22,6 @@ const (
 	latencyUpdatePeriod = 60000 // 60s
 	defaultRTOSamples   = 128
 	minRTOReporting     = 128
-	maxRTO              = 1000 // 1s
 )
 
 const (
@@ -218,8 +217,8 @@ func (reorg *Reorg) sampler() {
 					max = samples[i]
 				}
 			}
-			if max > maxRTO {
-				max = maxRTO
+			if max > uint32(reorg.config.Latency) {
+				max = uint32(reorg.config.Latency)
 			}
 			atomic.StoreUint32(&reorg.currentLatency, max)
 			log.Println("setting current latency to:", max)
