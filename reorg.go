@@ -159,10 +159,10 @@ func (reorg *Reorg) Serve() {
 	if reorg.config.Client {
 		// client creates aggregator on tun
 		// the client connections will re-new itself periodically
-		for _, remote := range reorg.config.RemoteAddr {
+		for k, remote := range reorg.config.RemoteAddr {
 			// we start client with some latency for each client
 			// to prevent from stop & re-connecting simultaneously.
-			log.Println("connecting client to remote: #", remote)
+			log.Printf("connecting client#%v to %v", k, remote)
 			go reorg.client(remote)
 			<-time.After(time.Second)
 		}

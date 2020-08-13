@@ -224,7 +224,7 @@ func main() {
 				log.Fatal("0 server address specified")
 			}
 			for k := range config.RemoteAddr {
-				log.Println("server:", config.RemoteAddr[k])
+				log.Printf("server %v:%v", k, config.RemoteAddr[k])
 			}
 		} else {
 			log.Println("server")
