@@ -405,7 +405,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 		// we have to take the packets count into consideration for latency accurency
 		now := currentMs()
 		latency := atomic.LoadUint32(&reorg.currentRTO)
-		reorg.reportRTO(conn.GetRTO())
+		reorg.reportRTO(2 * conn.GetRTO())
 
 		// packets handler
 		size := binary.LittleEndian.Uint16(hdr)
