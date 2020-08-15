@@ -337,7 +337,8 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, rxStopChan <-chan struct{}, isCl
 	timeout := time.Duration(reorg.config.KeepAlive/2) * time.Second
 
 	var autoExpireChan <-chan time.Time
-	if isClient { // only client side expires
+	if isClient && reorg.config.AutoExpire > 0 {
+		// only client side expires
 		autoExpireChan = time.After(time.Duration(reorg.config.AutoExpire) * time.Second)
 	}
 

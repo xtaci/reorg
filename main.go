@@ -52,7 +52,7 @@ func main() {
 		cli.IntFlag{
 			Name:  "latency",
 			Value: 300,
-			Usage: "maximum latency to reorganization packets in sender's sequence in(ms)",
+			Usage: "maximum latency in milliseconds before delivering packets to local receiver",
 		},
 		cli.IntFlag{
 			Name:  "autoexpire",
@@ -62,7 +62,7 @@ func main() {
 		cli.StringFlag{
 			Name:  "key",
 			Value: "reorger",
-			Usage: "pre-shared secret between client and server",
+			Usage: "pre-shared secret to encrypt exchaning packets between reorg client and server",
 		},
 		cli.StringFlag{
 			Name:  "crypt",
