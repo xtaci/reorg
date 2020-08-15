@@ -19,9 +19,8 @@ import (
 )
 
 const (
-	latencyUpdatePeriod = 60000 // 60s
-	defaultRTOSamples   = 128
-	minRTOReporting     = 128
+	latencyUpdatePeriod = 60 * time.Second
+	defaultRTTSamples   = 128
 )
 
 const (
@@ -52,8 +51,8 @@ type Reorg struct {
 	chKcpTX    chan reorgPacket // packets received from balancer will be delivered to this chan.
 	chTunTX    chan reorgPacket // packets from kcp session will be sent here awaiting to deliver to device
 
-	chSamplesRTO   chan uint32 //  all nearest latency samples from different links
-	currentLatency uint32
+	chSamplesRTT chan uint32 //  all nearest latency samples from different links
+	currentRTT   uint32
 
 	die     chan struct{} // closing signal.
 	dieOnce sync.Once
@@ -150,8 +149,8 @@ func NewReorg(config *Config) *Reorg {
 	reorg.die = make(chan struct{})
 	reorg.iface = iface
 	reorg.linkmtu = linkmtu
-	reorg.chSamplesRTO = make(chan uint32, defaultRTOSamples)
-	reorg.currentLatency = uint32(config.Latency)
+	reorg.chSamplesRTT = make(chan uint32, defaultRTTSamples)
+	reorg.currentRTT = uint32(config.Latency)
 	return reorg
 }
 
@@ -196,18 +195,18 @@ func (reorg *Reorg) Close() {
 // sampler is a goroutine to estimate the best RTO for multiple links
 func (reorg *Reorg) sampler() {
 	// a sliding samples window
-	samples := make([]uint32, defaultRTOSamples)
+	samples := make([]uint32, defaultRTTSamples)
 	for k := range samples {
 		samples[k] = uint32(reorg.config.Latency)
 	}
 	var seq uint32
 
-	ticker := time.NewTicker(latencyUpdatePeriod * time.Millisecond)
+	ticker := time.NewTicker(latencyUpdatePeriod)
 	defer ticker.Stop()
 	for {
 		select {
-		case rto := <-reorg.chSamplesRTO:
-			idx := seq % defaultRTOSamples
+		case rto := <-reorg.chSamplesRTT:
+			idx := seq % defaultRTTSamples
 			samples[idx] = rto
 			seq++
 		case <-ticker.C:
@@ -217,10 +216,12 @@ func (reorg *Reorg) sampler() {
 					max = samples[i]
 				}
 			}
+
+			// cap to config.Latency
 			if max > uint32(reorg.config.Latency) {
 				max = uint32(reorg.config.Latency)
 			}
-			atomic.StoreUint32(&reorg.currentLatency, max)
+			atomic.StoreUint32(&reorg.currentRTT, max)
 			log.Println("setting current latency to:", max)
 		case <-reorg.die:
 			return
@@ -228,9 +229,9 @@ func (reorg *Reorg) sampler() {
 	}
 }
 
-func (reorg *Reorg) reportRTO(rto uint32) {
+func (reorg *Reorg) reportRTT(rtt uint32) {
 	select {
-	case reorg.chSamplesRTO <- rto:
+	case reorg.chSamplesRTT <- rtt:
 	case <-reorg.die:
 		return
 	}
@@ -406,12 +407,11 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 		}
 
 		packetsCount++
-		latency := atomic.LoadUint32(&reorg.currentLatency)
+		// double the rtt to make long fat pipe
+		latency := 2 * atomic.LoadUint32(&reorg.currentRTT)
 
 		// we omit the beginning packets for RTT to converge
-		if packetsCount >= minRTOReporting {
-			reorg.reportRTO(2 * uint32(conn.GetSRTT()))
-		}
+		reorg.reportRTT(uint32(conn.GetSRTT()))
 
 		// packets handler
 		size := binary.LittleEndian.Uint16(hdr)
