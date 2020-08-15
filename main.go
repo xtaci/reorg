@@ -219,7 +219,7 @@ func main() {
 		}
 
 		if config.Client {
-			log.Printf("run as client with %v server", len(config.RemoteAddr))
+			log.Printf("REORG CLIENT with %v server", len(config.RemoteAddr))
 			if len(config.RemoteAddr) == 0 {
 				log.Fatal("0 server address specified")
 			}
@@ -227,7 +227,7 @@ func main() {
 				log.Printf("server %v:%v", k, config.RemoteAddr[k])
 			}
 		} else {
-			log.Println("server")
+			log.Println("REORG SERVER")
 			log.Println("listening on:", config.Listen)
 		}
 
