@@ -150,7 +150,7 @@ func NewReorg(config *Config) *Reorg {
 	reorg.iface = iface
 	reorg.linkmtu = linkmtu
 	reorg.chSamplesRTT = make(chan uint32, defaultRTTSamples)
-	reorg.currentRTT = uint32(config.Latency) / 2
+	reorg.currentRTT = uint32(config.Latency)
 	return reorg
 }
 

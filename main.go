@@ -51,7 +51,7 @@ func main() {
 		},
 		cli.IntFlag{
 			Name:  "latency",
-			Value: 300,
+			Value: 200,
 			Usage: "maximum latency in milliseconds before delivering packets to local receiver",
 		},
 		cli.IntFlag{
