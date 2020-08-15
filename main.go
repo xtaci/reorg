@@ -52,7 +52,7 @@ func main() {
 		cli.IntFlag{
 			Name:  "latency",
 			Value: 300,
-			Usage: "latency to reorganization packets in sender's sequence in(ms)",
+			Usage: "maximum latency to reorganization packets in sender's sequence in(ms)",
 		},
 		cli.IntFlag{
 			Name:  "autoexpire",
