@@ -294,7 +294,8 @@ func (reorg *Reorg) balancer() {
 // the algorithm follows the rules below:
 //
 // 1. try best to delivery the packet(from multiple links) in order
-// 2. if packets arrived out of order, wait at most interval(like 40ms) before delivery.
+// 2. if packets arrived out of order, wait at most interval(like 40ms) before delivery,
+//    for packets to retransmit and reorder.
 //
 func (reorg *Reorg) tunTX() {
 	var packetHeap delayedPacketHeap
@@ -304,16 +305,16 @@ func (reorg *Reorg) tunTX() {
 	flush := func() {
 		// try flush packets in order
 		for packetHeap.Len() > 0 {
-			if _itimediff(currentMs(), packetHeap[0].ts) >= 0 {
-				// and if expired, force delivery
-				packet := heap.Pop(&packetHeap).(reorgPacket).packet
-				n, err := reorg.iface.Write(packet)
-				defaultAllocator.Put(packet) // recycle after write
-				if err != nil {
-					log.Println("tunTX", "err", err, "n", n)
-				}
-			} else {
+			if _itimediff(currentMs(), packetHeap[0].ts) < 0 {
 				break
+			}
+
+			// time up
+			packet := heap.Pop(&packetHeap).(reorgPacket).packet
+			n, err := reorg.iface.Write(packet)
+			defaultAllocator.Put(packet) // recycle packets after write
+			if err != nil {
+				log.Println("tunTX", "err", err, "n", n)
 			}
 		}
 	}
