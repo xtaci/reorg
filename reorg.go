@@ -399,7 +399,6 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 	timeout := time.Duration(reorg.config.KeepAlive) * time.Second
 	hdr := make([]byte, hdrSize)
 
-	var packetsCount uint64
 	for {
 		conn.SetReadDeadline(time.Now().Add(timeout))
 		n, err := io.ReadFull(conn, hdr)
@@ -408,11 +407,10 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 			return
 		}
 
-		packetsCount++
 		// double the rtt to make long fat pipe
 		latency := 2 * atomic.LoadUint32(&reorg.currentRTT)
 
-		// we omit the beginning packets for RTT to converge
+		// report rtt from this link
 		reorg.reportRTT(uint32(conn.GetSRTT()))
 
 		// packets handler
