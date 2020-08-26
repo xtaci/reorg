@@ -231,7 +231,7 @@ func main() {
 			log.Println("listening on:", config.Listen)
 		}
 
-		if config.KeepAlive == 0 {
+		if config.KeepAlive <= 0 {
 			log.Fatal("keepalive must be postive")
 		}
 

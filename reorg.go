@@ -24,7 +24,7 @@ const (
 )
 
 const (
-	defaultPacketQueue = 1024 // packet IO queue of device
+	defaultPacketQueue = 2048 // packet IO queue of device
 )
 
 const (
@@ -229,10 +229,13 @@ func (reorg *Reorg) sampler() {
 	}
 }
 
+// reportRTT reports link round-trip time
 func (reorg *Reorg) reportRTT(rtt uint32) {
 	select {
 	case reorg.chSamplesRTT <- rtt:
 	case <-reorg.die:
+		return
+	default: // don't block receiving if reportRTT chSamplesRTT is full
 		return
 	}
 }
@@ -272,7 +275,9 @@ func (reorg *Reorg) balancer() {
 		case p := <-reorg.chBalancer:
 			// staging all packets from tun to prevent packet lost while tun txqueue becomes full
 			reorgPackets = append(reorgPackets, p)
+			// enable channel
 			chKcpTX = reorg.chKcpTX
+			// set next packet
 			nextPacket = reorgPackets[0]
 		case chKcpTX <- nextPacket:
 			// distribute packets evenly into kcp sessions via channel
