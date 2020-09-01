@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"container/heap"
 	"crypto/sha1"
 	"encoding/binary"
@@ -48,7 +47,7 @@ type Reorg struct {
 	iface   *water.Interface // tun device
 	linkmtu int              // the link mtu of this tun device
 
-	chBalancer chan reorgPacket // packets received from tun device will be delivered to balancer
+	chBalancer chan []byte      // packets received from tun device will be delivered to balancer
 	chKcpTX    chan []byte      // packets received from balancer will be delivered to this chan.
 	chTunTX    chan reorgPacket // packets from kcp session will be sent here awaiting to deliver to device
 
@@ -144,7 +143,7 @@ func NewReorg(config *Config) *Reorg {
 	reorg := new(Reorg)
 	reorg.config = config
 	reorg.block = block
-	reorg.chBalancer = make(chan reorgPacket, defaultPacketQueue)
+	reorg.chBalancer = make(chan []byte, defaultPacketQueue)
 	reorg.chKcpTX = make(chan []byte)
 	reorg.chTunTX = make(chan reorgPacket)
 	reorg.die = make(chan struct{})
@@ -159,7 +158,6 @@ func NewReorg(config *Config) *Reorg {
 func (reorg *Reorg) Serve() {
 	go reorg.sampler()
 	// spin-up tun-device reader/writer
-	go reorg.balancer()
 	go reorg.tunRX()
 	go reorg.tunTX()
 
@@ -252,56 +250,26 @@ func (reorg *Reorg) reportRTT(rtt uint32) {
 // tunRX is a goroutine for tun-device to receive incoming packets
 func (reorg *Reorg) tunRX() {
 	var seq uint32
-	buffer := make([]byte, reorg.linkmtu)
+	bufSize := reorg.linkmtu + hdrSize
 	for {
-		n, err := reorg.iface.Read(buffer[:])
+		buffer := defaultAllocator.Get(bufSize)
+		n, err := reorg.iface.Read(buffer[hdrSize:])
 		if err != nil {
 			log.Println("tunReader", "err", err, "n", n)
 		}
 
-		// create a copy of packets with closest buffer size to avoid wasting memory
-		packet := defaultAllocator.Get(n)
-		copy(packet, buffer)
+		// fill-in header
+		// 2-bytes size
+		binary.LittleEndian.PutUint16(buffer, uint16(n))
+		// 4-bytes seqid
+		binary.LittleEndian.PutUint32(buffer[seqOffset:], seq)
+		// 4-bytes timestamp
+		binary.LittleEndian.PutUint32(buffer[tsOffset:], currentMs())
 
 		select {
-		case reorg.chBalancer <- reorgPacket{packet, seq, currentMs()}:
+		case reorg.chBalancer <- buffer:
 			// seq is monotonic for a tun-device
 			seq++
-		case <-reorg.die:
-			return
-		}
-	}
-}
-
-// balancer is a groutine to balance packets from tun to different kcp link
-func (reorg *Reorg) balancer() {
-	var chKcpTX chan []byte
-	buffer := new(bytes.Buffer)
-
-	for {
-		select {
-		case p := <-reorg.chBalancer:
-			// wire-format packets
-			hdr := make([]byte, hdrSize)
-			// 2-bytes size
-			binary.LittleEndian.PutUint16(hdr, uint16(len(p.packet)))
-			// 4-bytes seqid
-			binary.LittleEndian.PutUint32(hdr[seqOffset:], p.seq)
-			// 4-bytes timestamp
-			binary.LittleEndian.PutUint32(hdr[tsOffset:], p.ts)
-
-			// staging all packets from tun to prevent packet lost while tun txqueue becomes full
-			buffer.Write(hdr)
-			buffer.Write(p.packet)
-			// enable channel
-			chKcpTX = reorg.chKcpTX
-
-			// return memory
-			defaultAllocator.Put(p.packet)
-		case chKcpTX <- buffer.Bytes():
-			// distribute packets batch into kcp sessions via channel
-			chKcpTX = nil // stop sending by setting chan to nil
-			buffer = new(bytes.Buffer)
 		case <-reorg.die:
 			return
 		}
@@ -368,10 +336,11 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, rxStopChan <-chan struct{}, isCl
 
 	for {
 		select {
-		case buffer := <-reorg.chKcpTX:
+		case buffer := <-reorg.chBalancer:
 			// write data
 			conn.SetWriteDeadline(time.Now().Add(timeout))
 			n, err := conn.Write(buffer)
+			defaultAllocator.Put(buffer)
 			if err != nil {
 				log.Println("kcpTX", "err", err, "n", n)
 				return
