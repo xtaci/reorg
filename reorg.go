@@ -24,7 +24,7 @@ const (
 )
 
 const (
-	defaultPacketQueue = 1024
+	defaultPacketQueue = 16384
 )
 
 const (
