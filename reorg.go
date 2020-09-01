@@ -196,33 +196,41 @@ func (reorg *Reorg) Close() {
 func (reorg *Reorg) sampler() {
 	// a sliding samples window
 	samples := make([]uint32, defaultRTTSamples)
-	for k := range samples {
-		samples[k] = uint32(reorg.config.Latency)
-	}
-	var seq uint32
 
 	ticker := time.NewTicker(latencyUpdatePeriod)
 	defer ticker.Stop()
+
+	var initialized bool
+	var seq uint32
+
 	for {
 		select {
-		case rto := <-reorg.chSamplesRTT:
+		case rtt := <-reorg.chSamplesRTT:
+			if !initialized {
+				for k := range samples {
+					samples[k] = uint32(rtt)
+				}
+				initialized = true
+			}
 			idx := seq % defaultRTTSamples
-			samples[idx] = rto
+			samples[idx] = rtt
 			seq++
 		case <-ticker.C:
-			max := samples[0]
-			for i := 1; i < len(samples); i++ {
-				if samples[i] > max {
-					max = samples[i]
+			if initialized {
+				max := samples[0]
+				for i := 1; i < len(samples); i++ {
+					if samples[i] > max {
+						max = samples[i]
+					}
 				}
-			}
 
-			// cap to config.Latency
-			if max > uint32(reorg.config.Latency) {
-				max = uint32(reorg.config.Latency)
+				// cap to config.Latency
+				if max > uint32(reorg.config.Latency) {
+					max = uint32(reorg.config.Latency)
+				}
+				atomic.StoreUint32(&reorg.currentRTT, max)
+				log.Println("setting current latency to:", max)
 			}
-			atomic.StoreUint32(&reorg.currentRTT, max)
-			log.Println("setting current latency to:", max)
 		case <-reorg.die:
 			return
 		}
@@ -404,6 +412,7 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 	timeout := time.Duration(reorg.config.KeepAlive) * time.Second
 	hdr := make([]byte, hdrSize)
 
+	var numPackets uint32
 	for {
 		conn.SetReadDeadline(time.Now().Add(timeout))
 		n, err := io.ReadFull(conn, hdr)
@@ -415,8 +424,11 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 		// double the rtt to make long fat pipe
 		latency := 2 * atomic.LoadUint32(&reorg.currentRTT)
 
-		// report rtt from this link
-		reorg.reportRTT(uint32(conn.GetSRTT()))
+		numPackets++
+		if numPackets%defaultRTTSamples == 0 {
+			// report rtt from this link
+			reorg.reportRTT(uint32(conn.GetSRTT()))
+		}
 
 		// packets handler
 		size := binary.LittleEndian.Uint16(hdr)
