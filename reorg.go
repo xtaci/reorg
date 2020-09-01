@@ -24,6 +24,10 @@ const (
 )
 
 const (
+	defaultPacketQueue = 1024
+)
+
+const (
 	defaultServerTunIP = "10.1.0.1/24"
 	defaultClientTunIP = "10.1.0.2/24"
 )
@@ -141,7 +145,7 @@ func NewReorg(config *Config) *Reorg {
 	reorg.block = block
 	reorg.chBalancer = make(chan []byte)
 	reorg.chKcpTX = make(chan []byte)
-	reorg.chTunTX = make(chan reorgPacket)
+	reorg.chTunTX = make(chan reorgPacket, defaultPacketQueue)
 	reorg.die = make(chan struct{})
 	reorg.iface = iface
 	reorg.linkmtu = linkmtu
@@ -385,12 +389,6 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 		// double the rtt to make long fat pipe
 		latency := 2 * atomic.LoadUint32(&reorg.currentRTT)
 
-		numPackets++
-		if numPackets%defaultRTTSamples == 0 {
-			// report rtt from this link
-			reorg.reportRTT(uint32(conn.GetSRTT()))
-		}
-
 		// packets handler
 		size := binary.LittleEndian.Uint16(hdr)
 		if size > 0 { // payload
@@ -415,6 +413,12 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 			}
 			select {
 			case reorg.chTunTX <- reorgPacket{payload, seq, now + uint32(compensate)}:
+				// update RTT
+				numPackets++
+				if numPackets%defaultRTTSamples == 0 {
+					// report rtt from this link
+					reorg.reportRTT(uint32(conn.GetSRTT()))
+				}
 			case <-reorg.die:
 				return
 			}
