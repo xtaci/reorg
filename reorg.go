@@ -24,10 +24,6 @@ const (
 )
 
 const (
-	defaultPacketQueue = 2048 // packet IO queue of device
-)
-
-const (
 	defaultServerTunIP = "10.1.0.1/24"
 	defaultClientTunIP = "10.1.0.2/24"
 )
@@ -143,7 +139,7 @@ func NewReorg(config *Config) *Reorg {
 	reorg := new(Reorg)
 	reorg.config = config
 	reorg.block = block
-	reorg.chBalancer = make(chan []byte, defaultPacketQueue)
+	reorg.chBalancer = make(chan []byte)
 	reorg.chKcpTX = make(chan []byte)
 	reorg.chTunTX = make(chan reorgPacket)
 	reorg.die = make(chan struct{})
