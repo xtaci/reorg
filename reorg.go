@@ -267,7 +267,7 @@ func (reorg *Reorg) tunRX() {
 		binary.LittleEndian.PutUint32(buffer[tsOffset:], currentMs())
 
 		select {
-		case reorg.chBalancer <- buffer:
+		case reorg.chBalancer <- buffer[:n+hdrSize]:
 			// seq is monotonic for a tun-device
 			seq++
 		case <-reorg.die:
