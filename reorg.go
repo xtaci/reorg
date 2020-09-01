@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"container/heap"
 	"crypto/sha1"
 	"encoding/binary"
@@ -48,7 +49,7 @@ type Reorg struct {
 	linkmtu int              // the link mtu of this tun device
 
 	chBalancer chan reorgPacket // packets received from tun device will be delivered to balancer
-	chKcpTX    chan reorgPacket // packets received from balancer will be delivered to this chan.
+	chKcpTX    chan []byte      // packets received from balancer will be delivered to this chan.
 	chTunTX    chan reorgPacket // packets from kcp session will be sent here awaiting to deliver to device
 
 	chSamplesRTT chan uint32 //  all nearest latency samples from different links
@@ -144,7 +145,7 @@ func NewReorg(config *Config) *Reorg {
 	reorg.config = config
 	reorg.block = block
 	reorg.chBalancer = make(chan reorgPacket, defaultPacketQueue)
-	reorg.chKcpTX = make(chan reorgPacket)
+	reorg.chKcpTX = make(chan []byte)
 	reorg.chTunTX = make(chan reorgPacket)
 	reorg.die = make(chan struct{})
 	reorg.iface = iface
@@ -274,27 +275,33 @@ func (reorg *Reorg) tunRX() {
 
 // balancer is a groutine to balance packets from tun to different kcp link
 func (reorg *Reorg) balancer() {
-	var reorgPackets []reorgPacket
-	var chKcpTX chan reorgPacket
-	var nextPacket reorgPacket
+	var chKcpTX chan []byte
+	buffer := new(bytes.Buffer)
 
 	for {
 		select {
 		case p := <-reorg.chBalancer:
+			// wire-format packets
+			hdr := make([]byte, hdrSize)
+			// 2-bytes size
+			binary.LittleEndian.PutUint16(hdr, uint16(len(p.packet)))
+			// 4-bytes seqid
+			binary.LittleEndian.PutUint32(hdr[seqOffset:], p.seq)
+			// 4-bytes timestamp
+			binary.LittleEndian.PutUint32(hdr[tsOffset:], p.ts)
+
 			// staging all packets from tun to prevent packet lost while tun txqueue becomes full
-			reorgPackets = append(reorgPackets, p)
+			buffer.Write(hdr)
+			buffer.Write(p.packet)
 			// enable channel
 			chKcpTX = reorg.chKcpTX
-			// set next packet
-			nextPacket = reorgPackets[0]
-		case chKcpTX <- nextPacket:
-			// distribute packets evenly into kcp sessions via channel
-			reorgPackets = reorgPackets[1:]
-			if len(reorgPackets) != 0 {
-				nextPacket = reorgPackets[0]
-			} else {
-				chKcpTX = nil // stop sending by setting chan to nil
-			}
+
+			// return memory
+			defaultAllocator.Put(p.packet)
+		case chKcpTX <- buffer.Bytes():
+			// distribute packets batch into kcp sessions via channel
+			chKcpTX = nil // stop sending by setting chan to nil
+			buffer = new(bytes.Buffer)
 		case <-reorg.die:
 			return
 		}
@@ -359,29 +366,18 @@ func (reorg *Reorg) kcpTX(conn *kcp.UDPSession, rxStopChan <-chan struct{}, isCl
 	keepaliveTimer := time.NewTimer(0)
 	defer keepaliveTimer.Stop()
 
-	hdr := make([]byte, hdrSize)
-
 	for {
 		select {
-		case rpacket := <-reorg.chKcpTX:
-			// 2-bytes size
-			binary.LittleEndian.PutUint16(hdr, uint16(len(rpacket.packet)))
-			// 4-bytes seqid
-			binary.LittleEndian.PutUint32(hdr[seqOffset:], rpacket.seq)
-			// 4-bytes timestamp
-			binary.LittleEndian.PutUint32(hdr[tsOffset:], rpacket.ts)
-
+		case buffer := <-reorg.chKcpTX:
 			// write data
 			conn.SetWriteDeadline(time.Now().Add(timeout))
-			n, err := conn.WriteBuffers([][]byte{hdr, rpacket.packet})
-			// return memory
-			defaultAllocator.Put(rpacket.packet)
+			n, err := conn.Write(buffer)
 			if err != nil {
 				log.Println("kcpTX", "err", err, "n", n)
 				return
 			}
 		case <-keepaliveTimer.C:
-			binary.LittleEndian.PutUint16(hdr, uint16(0)) // a zero-sized packet to keepalive
+			hdr := make([]byte, hdrSize) // a zero-sized packet to keepalive
 			conn.SetWriteDeadline(time.Now().Add(timeout))
 			n, err := conn.Write(hdr)
 			if err != nil {
