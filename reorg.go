@@ -287,7 +287,7 @@ func (reorg *Reorg) tunRX() {
 //
 func (reorg *Reorg) tunTX() {
 	var packetHeap delayedPacketHeap
-	ticker := time.NewTicker(10 * time.Millisecond)
+	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 
 	flush := func() {
@@ -514,7 +514,7 @@ func (reorg *Reorg) server() {
 		checkError(err)
 		log.Println("remote address:", conn.RemoteAddr())
 		conn.SetStreamMode(true)
-		conn.SetWriteDelay(false)
+		conn.SetWriteDelay(true)
 		conn.SetNoDelay(config.NoDelay, config.Interval, config.Resend, config.NoCongestion)
 		conn.SetMtu(config.MTU)
 		conn.SetWindowSize(config.SndWnd, config.RcvWnd)
