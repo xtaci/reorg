@@ -24,7 +24,8 @@ const (
 )
 
 const (
-	defaultPacketQueue = 16384
+	defaultPacketQueue    = 16384
+	initReorgHeapCapacity = 10000
 )
 
 const (
@@ -286,7 +287,7 @@ func (reorg *Reorg) tunRX() {
 //    for packets to retransmit and reorder.
 //
 func (reorg *Reorg) tunTX() {
-	var packetHeap delayedPacketHeap
+	packetHeap := delayedPacketHeap(make([]reorgPacket, 0, initReorgHeapCapacity))
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -294,7 +295,7 @@ func (reorg *Reorg) tunTX() {
 		// try flush packets in order
 		for packetHeap.Len() > 0 {
 			if _itimediff(currentMs(), packetHeap[0].ts) < 0 {
-				break
+				return
 			}
 
 			// time up
