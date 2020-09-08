@@ -133,6 +133,15 @@ func NewReorg(config *Config) *Reorg {
 	// set mtu
 	linkmtu := config.MTU - hdrSize
 	netlink.LinkSetMTU(tundevice, linkmtu)
+
+	// set txqueuelen
+	txqueuelen := config.SndWnd
+	if txqueuelen < config.RcvWnd {
+		txqueuelen = config.RcvWnd
+	}
+
+	netlink.LinkSetTxQLen(tundevice, txqueuelen)
+
 	// set up
 	netlink.LinkSetUp(tundevice)
 
