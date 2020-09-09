@@ -303,9 +303,10 @@ func (reorg *Reorg) tunTX() {
 	flush := func() {
 		// try flush packets in order
 		latency := 2 * atomic.LoadUint32(&reorg.currentRTT)
+		now := currentMs()
 
 		for packetHeap.Len() > 0 {
-			if _itimediff(currentMs(), packetHeap[0].ts+latency) < 0 {
+			if _itimediff(now, packetHeap[0].ts+latency) < 0 {
 				return
 			}
 
