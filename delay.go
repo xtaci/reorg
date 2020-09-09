@@ -10,8 +10,16 @@ type reorgPacket struct {
 // a heap for delayed packet
 type delayedPacketHeap []reorgPacket
 
-func (h delayedPacketHeap) Len() int            { return len(h) }
-func (h delayedPacketHeap) Less(i, j int) bool  { return _itimediff(h[i].seq, h[j].seq) < 0 }
+func (h delayedPacketHeap) Len() int { return len(h) }
+func (h delayedPacketHeap) Less(i, j int) bool {
+	if _itimediff(h[i].ts, h[j].ts) < 0 {
+		return true
+	} else if _itimediff(h[i].ts, h[j].ts) == 0 && _itimediff(h[i].seq, h[j].seq) == 0 {
+		return true
+	}
+	return false
+}
+
 func (h delayedPacketHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
 func (h *delayedPacketHeap) Push(x interface{}) { *h = append(*h, x.(reorgPacket)) }
 func (h *delayedPacketHeap) Pop() interface{} {
