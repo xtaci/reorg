@@ -14,7 +14,7 @@ func (h delayedPacketHeap) Len() int { return len(h) }
 func (h delayedPacketHeap) Less(i, j int) bool {
 	if _itimediff(h[i].ts, h[j].ts) < 0 {
 		return true
-	} else if _itimediff(h[i].ts, h[j].ts) == 0 && _itimediff(h[i].seq, h[j].seq) == 0 {
+	} else if _itimediff(h[i].ts, h[j].ts) == 0 && _itimediff(h[i].seq, h[j].seq) < 0 {
 		return true
 	}
 	return false
