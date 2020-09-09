@@ -302,8 +302,10 @@ func (reorg *Reorg) tunTX() {
 
 	flush := func() {
 		// try flush packets in order
+		latency := 2 * atomic.LoadUint32(&reorg.currentRTT)
+
 		for packetHeap.Len() > 0 {
-			if _itimediff(currentMs(), packetHeap[0].ts) < 0 {
+			if _itimediff(currentMs(), packetHeap[0].ts+latency) < 0 {
 				return
 			}
 
@@ -396,9 +398,6 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 			return
 		}
 
-		// double the rtt to make long fat pipe
-		latency := 2 * atomic.LoadUint32(&reorg.currentRTT)
-
 		// packets handler
 		size := binary.LittleEndian.Uint16(hdr)
 		if size > 0 { // payload
@@ -409,20 +408,11 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 				return
 			}
 
-			now := currentMs()
 			seq := binary.LittleEndian.Uint32(hdr[seqOffset:])
 			ts := binary.LittleEndian.Uint32(hdr[tsOffset:])
-			diff := _itimediff(now, ts)
-			if diff < 0 {
-				diff = 0
-			}
 
-			compensate := _itimediff(uint32(latency), uint32(diff))
-			if compensate < 0 {
-				compensate = 0
-			}
 			select {
-			case reorg.chTunTX <- reorgPacket{payload, seq, now + uint32(compensate)}:
+			case reorg.chTunTX <- reorgPacket{payload, seq, ts}:
 				// update RTT
 				numPackets++
 				if numPackets%defaultRTTSamples == 0 {
