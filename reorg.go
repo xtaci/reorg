@@ -367,7 +367,7 @@ func (reorg *Reorg) createConn(remote string, config *Config, block kcp.BlockCry
 	if err != nil {
 		return nil, errors.Wrap(err, "dial()")
 	}
-	kcpconn.SetStreamMode(true)
+	kcpconn.SetStreamMode(false)
 	kcpconn.SetWriteDelay(false)
 	kcpconn.SetNoDelay(config.NoDelay, config.Interval, config.Resend, config.NoCongestion)
 	kcpconn.SetWindowSize(config.SndWnd, config.RcvWnd)
@@ -448,7 +448,7 @@ func (reorg *Reorg) server() {
 		conn, err := listener.AcceptKCP()
 		checkError(err)
 		log.Println("remote address:", conn.RemoteAddr())
-		conn.SetStreamMode(true)
+		conn.SetStreamMode(false)
 		conn.SetWriteDelay(false)
 		conn.SetNoDelay(config.NoDelay, config.Interval, config.Resend, config.NoCongestion)
 		conn.SetMtu(config.MTU)
