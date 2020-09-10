@@ -238,7 +238,7 @@ func (reorg *Reorg) tunRX() {
 //
 func (reorg *Reorg) tunTX() {
 	packetHeap := delayedPacketHeap(make([]reorgPacket, 0, initReorgHeapCapacity))
-	ticker := time.NewTicker(20 * time.Millisecond)
+	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 
 	flush := func() {
