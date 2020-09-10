@@ -52,8 +52,7 @@ type Reorg struct {
 	chKcpTX    chan []byte      // packets received from balancer will be delivered to this chan.
 	chTunTX    chan reorgPacket // packets from kcp session will be sent here awaiting to deliver to device
 
-	chSamplesRTT chan uint32 //  all nearest latency samples from different links
-	currentRTT   uint32
+	currentRTT uint32
 
 	die     chan struct{} // closing signal.
 	dieOnce sync.Once
@@ -159,14 +158,12 @@ func NewReorg(config *Config) *Reorg {
 	reorg.die = make(chan struct{})
 	reorg.iface = iface
 	reorg.linkmtu = linkmtu
-	reorg.chSamplesRTT = make(chan uint32, defaultRTTSamples)
 	reorg.currentRTT = uint32(config.Latency)
 	return reorg
 }
 
 // Serve starts serving tunnel service
 func (reorg *Reorg) Serve() {
-	go reorg.sampler()
 	// spin-up tun-device reader/writer
 	go reorg.tunRX()
 	go reorg.tunTX()
@@ -199,62 +196,6 @@ func (reorg *Reorg) Close() {
 		close(reorg.die)
 		reorg.iface.Close()
 	})
-}
-
-// sampler is a goroutine to estimate the best RTO for multiple links
-func (reorg *Reorg) sampler() {
-	// a sliding samples window
-	samples := make([]uint32, defaultRTTSamples)
-
-	ticker := time.NewTicker(latencyUpdatePeriod)
-	defer ticker.Stop()
-
-	var initialized bool
-	var seq uint32
-
-	for {
-		select {
-		case rtt := <-reorg.chSamplesRTT:
-			if !initialized {
-				for k := range samples {
-					samples[k] = uint32(rtt)
-				}
-				initialized = true
-			}
-			idx := seq % defaultRTTSamples
-			samples[idx] = rtt
-			seq++
-		case <-ticker.C:
-			if initialized {
-				max := samples[0]
-				for i := 1; i < len(samples); i++ {
-					if samples[i] > max {
-						max = samples[i]
-					}
-				}
-
-				// cap to config.Latency
-				if max > uint32(reorg.config.Latency) {
-					max = uint32(reorg.config.Latency)
-				}
-				atomic.StoreUint32(&reorg.currentRTT, max)
-				log.Println("setting current latency to:", max)
-			}
-		case <-reorg.die:
-			return
-		}
-	}
-}
-
-// reportRTT reports link round-trip time
-func (reorg *Reorg) reportRTT(rtt uint32) {
-	select {
-	case reorg.chSamplesRTT <- rtt:
-	case <-reorg.die:
-		return
-	default: // don't block receiving if reportRTT chSamplesRTT is full
-		return
-	}
 }
 
 // tunRX is a goroutine for tun-device to receive incoming packets
@@ -302,7 +243,7 @@ func (reorg *Reorg) tunTX() {
 
 	flush := func() {
 		// try flush packets in order
-		latency := 2 * atomic.LoadUint32(&reorg.currentRTT)
+		latency := atomic.LoadUint32(&reorg.currentRTT)
 		now := currentMs()
 
 		for packetHeap.Len() > 0 {
@@ -390,7 +331,6 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 	timeout := time.Duration(reorg.config.KeepAlive) * time.Second
 	hdr := make([]byte, hdrSize)
 
-	var numPackets uint32
 	for {
 		conn.SetReadDeadline(time.Now().Add(timeout))
 		n, err := io.ReadFull(conn, hdr)
@@ -414,12 +354,6 @@ func (reorg *Reorg) kcpRX(conn *kcp.UDPSession, rxStopChan chan struct{}) {
 
 			select {
 			case reorg.chTunTX <- reorgPacket{payload, seq, ts}:
-				// update RTT
-				numPackets++
-				if numPackets%defaultRTTSamples == 0 {
-					// report rtt from this link
-					reorg.reportRTT(uint32(conn.GetSRTT()))
-				}
 			case <-reorg.die:
 				return
 			}
