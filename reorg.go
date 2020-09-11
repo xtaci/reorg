@@ -40,19 +40,6 @@ const (
 	tsOffset  = 6
 )
 
-func init() {
-	tsc.Enabled = true
-	go func() {
-		ticker := time.NewTicker(1 * time.Hour)
-		defer ticker.Stop()
-
-		for {
-			<-ticker.C
-			tsc.Calibrate()
-		}
-	}()
-}
-
 // Reorg defines a packet organizer to add extra latency in exchange for smoothness and throughput
 // from multiple link
 type Reorg struct {

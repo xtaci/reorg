@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/templexxx/tsc"
 	"github.com/urfave/cli"
 )
 
@@ -253,6 +254,18 @@ func main() {
 
 		// start snmp logger
 		go SnmpLogger(config.SnmpLog, config.SnmpPeriod)
+
+		// start tsc timer
+		tsc.Enabled = true
+		go func() {
+			ticker := time.NewTicker(1 * time.Hour)
+			defer ticker.Stop()
+
+			for {
+				<-ticker.C
+				tsc.Calibrate()
+			}
+		}()
 
 		// start reorg
 		reorg := NewReorg(&config)
