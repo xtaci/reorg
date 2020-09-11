@@ -166,7 +166,7 @@ func NewReorg(config *Config) *Reorg {
 	reorg := new(Reorg)
 	reorg.config = config
 	reorg.block = block
-	reorg.chBalancer = make(chan []byte)
+	reorg.chBalancer = make(chan []byte, defaultPacketQueue)
 	reorg.chKcpTX = make(chan []byte)
 	reorg.chTunTX = make(chan reorgPacket, defaultPacketQueue)
 	reorg.die = make(chan struct{})
