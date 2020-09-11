@@ -31,6 +31,9 @@ github.com/pkg/errors
 github.com/songgao/water
 # github.com/templexxx/cpu v0.0.7
 github.com/templexxx/cpu
+# github.com/templexxx/tsc v0.0.1
+## explicit
+github.com/templexxx/tsc
 # github.com/templexxx/xorsimd v0.4.1
 github.com/templexxx/xorsimd
 # github.com/tjfoc/gmsm v1.3.2

@@ -12,6 +12,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/songgao/water"
+	"github.com/templexxx/tsc"
 	"github.com/vishvananda/netlink"
 	"github.com/xtaci/kcp-go/v5"
 	"github.com/xtaci/tcpraw"
@@ -39,6 +40,19 @@ const (
 	tsOffset  = 6
 )
 
+func init() {
+	tsc.Enabled = true
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+
+		for {
+			<-ticker.C
+			tsc.Calibrate()
+		}
+	}()
+}
+
 // Reorg defines a packet organizer to add extra latency in exchange for smoothness and throughput
 // from multiple link
 type Reorg struct {
@@ -59,7 +73,7 @@ type Reorg struct {
 }
 
 // currentMs returns current elasped monotonic milliseconds since program startup
-func currentMs() uint32 { return uint32(time.Now().UnixNano() / int64(time.Millisecond)) }
+func currentMs() uint32 { return uint32(tsc.UnixNano() / int64(time.Millisecond)) }
 
 func _itimediff(later, earlier uint32) int32 {
 	return (int32)(later - earlier)
