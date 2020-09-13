@@ -255,8 +255,8 @@ func main() {
 		// start snmp logger
 		go SnmpLogger(config.SnmpLog, config.SnmpPeriod)
 
-		// start tsc timer
-		tsc.Enabled = true
+		// enable tsc timer by setting tsc.Enable = true
+		// tsc.Enabled = true
 		go func() {
 			ticker := time.NewTicker(1 * time.Hour)
 			defer ticker.Stop()
