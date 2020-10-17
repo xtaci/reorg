@@ -47,7 +47,7 @@ github.com/vishvananda/netlink
 github.com/vishvananda/netlink/nl
 # github.com/vishvananda/netns v0.0.0-20191106174202-0a2b9b5464df
 github.com/vishvananda/netns
-# github.com/xtaci/kcp-go/v5 v5.5.15
+# github.com/xtaci/kcp-go/v5 v5.6.1
 ## explicit
 github.com/xtaci/kcp-go/v5
 # github.com/xtaci/tcpraw v1.2.25

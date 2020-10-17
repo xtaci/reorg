@@ -8,7 +8,7 @@ require (
 	github.com/templexxx/tsc v0.0.1
 	github.com/urfave/cli v1.21.0
 	github.com/vishvananda/netlink v1.1.0
-	github.com/xtaci/kcp-go/v5 v5.5.15
+	github.com/xtaci/kcp-go/v5 v5.6.1
 	github.com/xtaci/tcpraw v1.2.25
 	golang.org/x/crypto v0.0.0-20200728195943-123391ffb6de
 )
