@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"net"
 	"runtime"
-
-	"golang.org/x/net/internal/socket"
 )
 
 const (
@@ -67,13 +65,13 @@ func (h *Header) Marshal() ([]byte, error) {
 	b[1] = byte(h.TOS)
 	flagsAndFragOff := (h.FragOff & 0x1fff) | int(h.Flags<<13)
 	switch runtime.GOOS {
-	case "darwin", "dragonfly", "netbsd":
-		socket.NativeEndian.PutUint16(b[2:4], uint16(h.TotalLen))
-		socket.NativeEndian.PutUint16(b[6:8], uint16(flagsAndFragOff))
+	case "darwin", "ios", "dragonfly", "netbsd":
+		binary.NativeEndian.PutUint16(b[2:4], uint16(h.TotalLen))
+		binary.NativeEndian.PutUint16(b[6:8], uint16(flagsAndFragOff))
 	case "freebsd":
 		if freebsdVersion < 1100000 {
-			socket.NativeEndian.PutUint16(b[2:4], uint16(h.TotalLen))
-			socket.NativeEndian.PutUint16(b[6:8], uint16(flagsAndFragOff))
+			binary.NativeEndian.PutUint16(b[2:4], uint16(h.TotalLen))
+			binary.NativeEndian.PutUint16(b[6:8], uint16(flagsAndFragOff))
 		} else {
 			binary.BigEndian.PutUint16(b[2:4], uint16(h.TotalLen))
 			binary.BigEndian.PutUint16(b[6:8], uint16(flagsAndFragOff))
@@ -126,16 +124,16 @@ func (h *Header) Parse(b []byte) error {
 	h.Src = net.IPv4(b[12], b[13], b[14], b[15])
 	h.Dst = net.IPv4(b[16], b[17], b[18], b[19])
 	switch runtime.GOOS {
-	case "darwin", "dragonfly", "netbsd":
-		h.TotalLen = int(socket.NativeEndian.Uint16(b[2:4])) + hdrlen
-		h.FragOff = int(socket.NativeEndian.Uint16(b[6:8]))
+	case "darwin", "ios", "dragonfly", "netbsd":
+		h.TotalLen = int(binary.NativeEndian.Uint16(b[2:4])) + hdrlen
+		h.FragOff = int(binary.NativeEndian.Uint16(b[6:8]))
 	case "freebsd":
 		if freebsdVersion < 1100000 {
-			h.TotalLen = int(socket.NativeEndian.Uint16(b[2:4]))
+			h.TotalLen = int(binary.NativeEndian.Uint16(b[2:4]))
 			if freebsdVersion < 1000000 {
 				h.TotalLen += hdrlen
 			}
-			h.FragOff = int(socket.NativeEndian.Uint16(b[6:8]))
+			h.FragOff = int(binary.NativeEndian.Uint16(b[6:8]))
 		} else {
 			h.TotalLen = int(binary.BigEndian.Uint16(b[2:4]))
 			h.FragOff = int(binary.BigEndian.Uint16(b[6:8]))
